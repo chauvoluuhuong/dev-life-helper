@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# PostgreSQL Migration Script: Dev to Local (All Databases)
-# This script migrates all databases from development environment to local environment
+# PostgreSQL Migration Script: Source to Target (All Databases)
+# This script migrates all databases from source PostgreSQL to target PostgreSQL
 
 set -e  # Exit on any error
 
@@ -12,9 +12,11 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Default ports
-DEV_PORT="5432"
-LOCAL_PORT="5432"
+# Default connection parameters
+DEFAULT_HOST="localhost"
+DEFAULT_PORT="5432"
+DEFAULT_USERNAME="postgres"
+DEFAULT_PASSWORD="postgres"
 
 # Backup configuration
 BACKUP_DIR="./dump"
@@ -23,85 +25,115 @@ DATE=$(date +"%Y%m%d_%H%M%S")
 # Databases to exclude from migration (system databases)
 EXCLUDE_DBS=("template0" "template1" "postgres" "rdsadmin")
 
-echo -e "${BLUE}=== PostgreSQL Migration: All Databases (Dev to Local) ===${NC}"
+echo -e "${BLUE}=== PostgreSQL Migration: All Databases (Source to Target) ===${NC}"
 echo ""
 
 # Prompt for database connection parameters
 echo -e "${YELLOW}=== Database Connection Configuration ===${NC}"
 echo ""
 
-# Source (Development) Environment
+# Source Database Environment
 echo -e "${YELLOW}Source Database Configuration:${NC}"
-echo -n "Enter development database host: "
-read DEV_HOST
-echo -n "Enter development database username: "
-read DEV_USERNAME
+echo -n "Enter source database host (default: $DEFAULT_HOST): "
+read SOURCE_HOST
+if [ -z "$SOURCE_HOST" ]; then
+    SOURCE_HOST="$DEFAULT_HOST"
+fi
+echo -n "Enter source database port (default: $DEFAULT_PORT): "
+read SOURCE_PORT
+if [ -z "$SOURCE_PORT" ]; then
+    SOURCE_PORT="$DEFAULT_PORT"
+fi
+echo -n "Enter source database username (default: $DEFAULT_USERNAME): "
+read SOURCE_USERNAME
+if [ -z "$SOURCE_USERNAME" ]; then
+    SOURCE_USERNAME="$DEFAULT_USERNAME"
+fi
+echo -n "Enter source database password (default: $DEFAULT_PASSWORD): "
+read -s SOURCE_PASSWORD
+if [ -z "$SOURCE_PASSWORD" ]; then
+    SOURCE_PASSWORD="$DEFAULT_PASSWORD"
+fi
+echo ""
 
-# Target (Local) Environment
+# Target Database Environment
 echo ""
 echo -e "${YELLOW}Target Database Configuration:${NC}"
-echo -n "Enter local database host (default: localhost): "
-read LOCAL_HOST
-if [ -z "$LOCAL_HOST" ]; then
-    LOCAL_HOST="localhost"
+echo -n "Enter target database host (default: $DEFAULT_HOST): "
+read TARGET_HOST
+if [ -z "$TARGET_HOST" ]; then
+    TARGET_HOST="$DEFAULT_HOST"
 fi
-echo -n "Enter local database username (default: postgres): "
-read LOCAL_USERNAME
-if [ -z "$LOCAL_USERNAME" ]; then
-    LOCAL_USERNAME="postgres"
+echo -n "Enter target database port (default: $DEFAULT_PORT): "
+read TARGET_PORT
+if [ -z "$TARGET_PORT" ]; then
+    TARGET_PORT="$DEFAULT_PORT"
 fi
-echo -n "Enter local database password: "
-read -s LOCAL_PASSWORD
+echo -n "Enter target database username (default: $DEFAULT_USERNAME): "
+read TARGET_USERNAME
+if [ -z "$TARGET_USERNAME" ]; then
+    TARGET_USERNAME="$DEFAULT_USERNAME"
+fi
+echo -n "Enter target database password (default: $DEFAULT_PASSWORD): "
+read -s TARGET_PASSWORD
+if [ -z "$TARGET_PASSWORD" ]; then
+    TARGET_PASSWORD="$DEFAULT_PASSWORD"
+fi
 echo ""
 
 echo ""
 echo -e "${BLUE}Configuration Summary:${NC}"
-echo "Source: $DEV_HOST:$DEV_PORT (user: $DEV_USERNAME)"
-echo "Target: $LOCAL_HOST:$LOCAL_PORT (user: $LOCAL_USERNAME)"
+echo "Source: $SOURCE_HOST:$SOURCE_PORT (user: $SOURCE_USERNAME)"
+echo "Target: $TARGET_HOST:$TARGET_PORT (user: $TARGET_USERNAME)"
 echo ""
 
 # Create backup directory if it doesn't exist
 mkdir -p "$BACKUP_DIR"
 
 # Validate required parameters
-if [ -z "$DEV_HOST" ]; then
-    echo -e "${RED}Error: Development database host cannot be empty${NC}"
+if [ -z "$SOURCE_HOST" ]; then
+    echo -e "${RED}Error: Source database host cannot be empty${NC}"
     exit 1
 fi
 
-if [ -z "$DEV_USERNAME" ]; then
-    echo -e "${RED}Error: Development database username cannot be empty${NC}"
+if [ -z "$SOURCE_USERNAME" ]; then
+    echo -e "${RED}Error: Source database username cannot be empty${NC}"
     exit 1
 fi
 
-# Prompt for dev environment password
-echo -e "${YELLOW}Enter password for dev environment user '$DEV_USERNAME':${NC}"
-read -s DEV_PASSWORD
-echo ""
-
-if [ -z "$DEV_PASSWORD" ]; then
-    echo -e "${RED}Error: Dev environment password cannot be empty${NC}"
+if [ -z "$SOURCE_PASSWORD" ]; then
+    echo -e "${RED}Error: Source database password cannot be empty${NC}"
     exit 1
 fi
 
-if [ -z "$LOCAL_PASSWORD" ]; then
-    echo -e "${RED}Error: Local environment password cannot be empty${NC}"
+if [ -z "$TARGET_HOST" ]; then
+    echo -e "${RED}Error: Target database host cannot be empty${NC}"
     exit 1
 fi
 
-# Test connection to dev environment
-echo -e "${YELLOW}Testing connection to dev environment...${NC}"
-export PGPASSWORD=$DEV_PASSWORD
-if ! pg_isready -h $DEV_HOST -p $DEV_PORT -U $DEV_USERNAME -t 10; then
-    echo -e "${RED}Error: Cannot connect to dev environment${NC}"
+if [ -z "$TARGET_USERNAME" ]; then
+    echo -e "${RED}Error: Target database username cannot be empty${NC}"
+    exit 1
+fi
+
+if [ -z "$TARGET_PASSWORD" ]; then
+    echo -e "${RED}Error: Target database password cannot be empty${NC}"
+    exit 1
+fi
+
+# Test connection to source environment
+echo -e "${YELLOW}Testing connection to source environment...${NC}"
+export PGPASSWORD=$SOURCE_PASSWORD
+if ! pg_isready -h $SOURCE_HOST -p $SOURCE_PORT -U $SOURCE_USERNAME -t 10; then
+    echo -e "${RED}Error: Cannot connect to source environment${NC}"
     unset PGPASSWORD
     exit 1
 fi
-echo -e "${GREEN}✓ Connected to dev environment${NC}"
+echo -e "${GREEN}✓ Connected to source environment${NC}"
 
-# Get list of all databases from dev environment
-echo -e "${YELLOW}Discovering databases in dev environment...${NC}"
-DATABASES=$(psql -h $DEV_HOST -p $DEV_PORT -U $DEV_USERNAME -tAc "SELECT datname FROM pg_database WHERE datistemplate = false AND datallowconn = true;" 2>/dev/null)
+# Get list of all databases from source environment
+echo -e "${YELLOW}Discovering databases in source environment...${NC}"
+DATABASES=$(psql -h $SOURCE_HOST -p $SOURCE_PORT -U $SOURCE_USERNAME -tAc "SELECT datname FROM pg_database WHERE datistemplate = false AND datallowconn = true;" 2>/dev/null)
 
 if [ -z "$DATABASES" ]; then
     echo -e "${RED}Error: No databases found or failed to retrieve database list${NC}"
@@ -137,8 +169,8 @@ done
 echo ""
 
 # Confirm migration
-echo -e "${YELLOW}This will migrate all listed databases to your local environment.${NC}"
-echo -e "${YELLOW}WARNING: This will overwrite existing local databases with the same names!${NC}"
+echo -e "${YELLOW}This will migrate all listed databases to your target environment.${NC}"
+echo -e "${YELLOW}WARNING: This will overwrite existing target databases with the same names!${NC}"
 echo -n "Continue? (y/N): "
 read -r confirm
 if [[ ! $confirm =~ ^[Yy]$ ]]; then
@@ -147,16 +179,16 @@ if [[ ! $confirm =~ ^[Yy]$ ]]; then
     exit 0
 fi
 
-# Test connection to local environment
-echo -e "${YELLOW}Testing connection to local environment...${NC}"
-export PGPASSWORD=$LOCAL_PASSWORD
-if ! pg_isready -h $LOCAL_HOST -p $LOCAL_PORT -U $LOCAL_USERNAME -t 10; then
-    echo -e "${RED}Error: Cannot connect to local PostgreSQL${NC}"
-    echo "Please ensure PostgreSQL is running locally"
+# Test connection to target environment
+echo -e "${YELLOW}Testing connection to target environment...${NC}"
+export PGPASSWORD=$TARGET_PASSWORD
+if ! pg_isready -h $TARGET_HOST -p $TARGET_PORT -U $TARGET_USERNAME -t 10; then
+    echo -e "${RED}Error: Cannot connect to target PostgreSQL${NC}"
+    echo "Please ensure PostgreSQL is running on target"
     unset PGPASSWORD
     exit 1
 fi
-echo -e "${GREEN}✓ Connected to local environment${NC}"
+echo -e "${GREEN}✓ Connected to target environment${NC}"
 
 # Initialize counters
 TOTAL_DBS=$(echo $FILTERED_DATABASES | wc -w)
@@ -174,12 +206,12 @@ for DBNAME in $FILTERED_DATABASES; do
     
     echo -e "${BLUE}=== Processing Database $CURRENT_DB/$TOTAL_DBS: $DBNAME ===${NC}"
     
-    # Set password for dev environment
-    export PGPASSWORD=$DEV_PASSWORD
+    # Set password for source environment
+    export PGPASSWORD=$SOURCE_PASSWORD
     
-    # Dump database from dev environment
-    echo -e "${YELLOW}[$CURRENT_DB/$TOTAL_DBS] Dumping $DBNAME from dev environment...${NC}"
-    if pg_dump -h $DEV_HOST -p $DEV_PORT -U $DEV_USERNAME -d $DBNAME \
+    # Dump database from source environment
+    echo -e "${YELLOW}[$CURRENT_DB/$TOTAL_DBS] Dumping $DBNAME from source environment...${NC}"
+    if pg_dump -h $SOURCE_HOST -p $SOURCE_PORT -U $SOURCE_USERNAME -d $DBNAME \
         --verbose --no-owner --no-privileges -F c -f "$BACKUP_FILE"; then
         echo -e "${GREEN}✓ Backup successful: $BACKUP_FILE${NC}"
         echo "Backup size: $(du -h $BACKUP_FILE | cut -f1)"
@@ -189,16 +221,16 @@ for DBNAME in $FILTERED_DATABASES; do
         continue
     fi
     
-    # Switch to local environment password
-    export PGPASSWORD=$LOCAL_PASSWORD
+    # Switch to target environment password
+    export PGPASSWORD=$TARGET_PASSWORD
     
-    # Check if local database exists, create if not
-    echo -e "${YELLOW}[$CURRENT_DB/$TOTAL_DBS] Checking if local database '$DBNAME' exists...${NC}"
-    DB_EXISTS=$(psql -h $LOCAL_HOST -p $LOCAL_PORT -U $LOCAL_USERNAME -tAc "SELECT 1 FROM pg_database WHERE datname='$DBNAME'" 2>/dev/null || echo "")
+    # Check if target database exists, create if not
+    echo -e "${YELLOW}[$CURRENT_DB/$TOTAL_DBS] Checking if target database '$DBNAME' exists...${NC}"
+    DB_EXISTS=$(psql -h $TARGET_HOST -p $TARGET_PORT -U $TARGET_USERNAME -tAc "SELECT 1 FROM pg_database WHERE datname='$DBNAME'" 2>/dev/null || echo "")
     
     if [ "$DB_EXISTS" != "1" ]; then
         echo -e "${YELLOW}Database '$DBNAME' does not exist. Creating...${NC}"
-        if createdb -h $LOCAL_HOST -p $LOCAL_PORT -U $LOCAL_USERNAME $DBNAME; then
+        if createdb -h $TARGET_HOST -p $TARGET_PORT -U $TARGET_USERNAME $DBNAME; then
             echo -e "${GREEN}✓ Database '$DBNAME' created${NC}"
         else
             echo -e "${RED}✗ Failed to create database '$DBNAME'${NC}"
@@ -209,9 +241,9 @@ for DBNAME in $FILTERED_DATABASES; do
         echo -e "${YELLOW}Database '$DBNAME' already exists (will be overwritten)${NC}"
     fi
     
-    # Restore database to local environment
-    echo -e "${YELLOW}[$CURRENT_DB/$TOTAL_DBS] Restoring $DBNAME to local environment...${NC}"
-    if pg_restore --exit-on-error -h $LOCAL_HOST -p $LOCAL_PORT -U $LOCAL_USERNAME \
+    # Restore database to target environment
+    echo -e "${YELLOW}[$CURRENT_DB/$TOTAL_DBS] Restoring $DBNAME to target environment...${NC}"
+    if pg_restore --exit-on-error -h $TARGET_HOST -p $TARGET_PORT -U $TARGET_USERNAME \
         -d $DBNAME --clean --if-exists --no-owner --no-privileges \
         --verbose "$BACKUP_FILE"; then
         echo -e "${GREEN}✓ Migration completed for $DBNAME${NC}"
@@ -228,8 +260,8 @@ done
 unset PGPASSWORD
 
 echo -e "${BLUE}=== Migration Summary ===${NC}"
-echo "Source: $DEV_HOST"
-echo "Target: $LOCAL_HOST"
+echo "Source: $SOURCE_HOST:$SOURCE_PORT"
+echo "Target: $TARGET_HOST:$TARGET_PORT"
 echo "Total databases: $TOTAL_DBS"
 echo -e "Successful migrations: ${GREEN}$SUCCESSFUL_MIGRATIONS${NC}"
 echo -e "Failed migrations: ${RED}$FAILED_MIGRATIONS${NC}"
