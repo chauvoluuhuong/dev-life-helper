@@ -1,1 +1,1 @@
-# Scripts code the make my life easier
+# Scripts code that make my life easier
