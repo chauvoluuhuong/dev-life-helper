@@ -163,7 +163,7 @@ fi
 # Test connection to target environment
 echo -e "${YELLOW}Testing connection to target environment...${NC}"
 export PGPASSWORD=$TARGET_PASSWORD
-if ! pg_isready -h $TARGET_HOST -p $TARGET_PORT -U $TARGET_USERNAME -t 10; then
+if ! timeout 10 psql -h $TARGET_HOST -p $TARGET_PORT -U $TARGET_USERNAME -d postgres -c "SELECT 1;" >/dev/null 2>&1; then
     echo -e "${RED}Error: Cannot connect to target PostgreSQL${NC}"
     echo "Please ensure PostgreSQL is running on target"
     unset PGPASSWORD
@@ -190,8 +190,13 @@ else
     # Test connection to source environment
     echo -e "${YELLOW}Testing connection to source environment...${NC}"
     export PGPASSWORD=$SOURCE_PASSWORD
-    if ! pg_isready -h $SOURCE_HOST -p $SOURCE_PORT -U $SOURCE_USERNAME -t 10; then
+    if ! timeout 10 psql -h $SOURCE_HOST -p $SOURCE_PORT -U $SOURCE_USERNAME -d postgres -c "SELECT 1;" >/dev/null 2>&1; then
         echo -e "${RED}Error: Cannot connect to source environment${NC}"
+        echo -e "${YELLOW}Please check:${NC}"
+        echo -e "  - Network connectivity to AWS RDS"
+        echo -e "  - Security groups allow connections from your IP"
+        echo -e "  - Username and password are correct"
+        echo -e "  - RDS instance is running"
         unset PGPASSWORD
         exit 1
     fi
@@ -199,10 +204,27 @@ else
 
     # Get list of all databases from source environment
     echo -e "${YELLOW}Discovering databases in source environment...${NC}"
-    DATABASES=$(psql -h $SOURCE_HOST -p $SOURCE_PORT -U $SOURCE_USERNAME -tAc "SELECT datname FROM pg_database WHERE datistemplate = false AND datallowconn = true;" 2>/dev/null)
+    DATABASES=$(timeout 30 psql -h $SOURCE_HOST -p $SOURCE_PORT -U $SOURCE_USERNAME -tAc "SELECT datname FROM pg_database WHERE datistemplate = false AND datallowconn = true;" 2>&1)
+    DB_QUERY_EXIT_CODE=$?
+
+    if [ $DB_QUERY_EXIT_CODE -eq 124 ]; then
+        echo -e "${RED}Error: Database discovery timed out after 30 seconds${NC}"
+        echo -e "${YELLOW}This could indicate:${NC}"
+        echo -e "  - A locked pg_database table"
+        echo -e "  - Long-running transactions"
+        echo -e "  - Network connectivity issues"
+        echo -e "  - Insufficient permissions"
+        unset PGPASSWORD
+        exit 1
+    elif [ $DB_QUERY_EXIT_CODE -ne 0 ]; then
+        echo -e "${RED}Error: Failed to retrieve database list. Exit code: $DB_QUERY_EXIT_CODE${NC}"
+        echo -e "${YELLOW}Error output: $DATABASES${NC}"
+        unset PGPASSWORD
+        exit 1
+    fi
 
     if [ -z "$DATABASES" ]; then
-        echo -e "${RED}Error: No databases found or failed to retrieve database list${NC}"
+        echo -e "${RED}Error: No databases found${NC}"
         unset PGPASSWORD
         exit 1
     fi
