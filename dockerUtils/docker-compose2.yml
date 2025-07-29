@@ -1,0 +1,41 @@
+version: "3.8"
+
+services:
+  # MongoDB Database
+  mongodb:
+    image: mongo:7.0
+    container_name: mongodb-mongoku-test
+    restart: unless-stopped
+    ports:
+      - "27018:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: rootpass
+      MONGO_INITDB_DATABASE: sampledb
+    volumes:
+      - mongoku_data:/data/db
+      - ./init-data.js:/docker-entrypoint-initdb.d/init-data.js:ro
+    networks:
+      - mongoku-network
+
+  # Mongoku - Modern MongoDB client interface
+  mongoku:
+    image: huggingface/mongoku:latest
+    container_name: mongoku-ui
+    restart: unless-stopped
+    ports:
+      - "3100:3100"
+    environment:
+      MONGOKU_DEFAULT_HOST: mongodb://root:rootpass@mongodb:27017/
+    depends_on:
+      - mongodb
+    networks:
+      - mongoku-network
+
+volumes:
+  mongoku_data:
+    driver: local
+
+networks:
+  mongoku-network:
+    driver: bridge
