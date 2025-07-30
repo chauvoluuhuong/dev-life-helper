@@ -27,7 +27,11 @@ show_main_menu() {
 # Function to find docker-compose files
 find_compose_files() {
     echo -e "${YELLOW}Searching for docker-compose files...${NC}"
-    mapfile -t compose_files < <(find . -name "docker-compose*.yml" -o -name "docker-compose*.yaml" | sort)
+    # Use a more compatible approach instead of mapfile
+    compose_files=()
+    while IFS= read -r line; do
+        compose_files+=("$line")
+    done < <(find . -name "docker-compose*.yml" -o -name "docker-compose*.yaml" | sort)
     
     if [ ${#compose_files[@]} -eq 0 ]; then
         echo -e "${RED}No docker-compose files found in current directory${NC}"
