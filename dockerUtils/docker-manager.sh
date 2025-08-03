@@ -244,6 +244,128 @@ get_project_name() {
     echo "${dir_name//[^a-zA-Z0-9_-]/_}"
 }
 
+# Function to list containers that will be removed
+list_containers_to_remove() {
+    local containers=$(docker ps -aq 2>/dev/null)
+    if [ -n "$containers" ]; then
+        echo -e "${YELLOW}Containers to be removed:${NC}"
+        docker ps -a --format "table {{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}"
+        echo
+    else
+        echo -e "${GREEN}No containers to remove${NC}"
+    fi
+}
+
+# Function to list images that will be removed
+list_images_to_remove() {
+    local images=$(docker images -q 2>/dev/null)
+    if [ -n "$images" ]; then
+        echo -e "${YELLOW}Images to be removed:${NC}"
+        docker images --format "table {{.Repository}}\t{{.Tag}}\t{{.ID}}\t{{.Size}}"
+        echo
+    else
+        echo -e "${GREEN}No images to remove${NC}"
+    fi
+}
+
+# Function to list volumes that will be removed
+list_volumes_to_remove() {
+    local volumes=$(docker volume ls -q 2>/dev/null)
+    if [ -n "$volumes" ]; then
+        echo -e "${YELLOW}Volumes to be removed:${NC}"
+        docker volume ls --format "table {{.Driver}}\t{{.Name}}"
+        echo
+    else
+        echo -e "${GREEN}No volumes to remove${NC}"
+    fi
+}
+
+# Function to list project-specific resources
+list_project_resources() {
+    local project_name="$1"
+    local compose_file="$2"
+    
+    echo -e "${YELLOW}Project: $project_name${NC}"
+    echo -e "${YELLOW}Compose file: $compose_file${NC}"
+    echo
+    
+    # List project containers
+    local project_containers=$(docker ps -a --filter "label=com.docker.compose.project=$project_name" --format "{{.ID}}" 2>/dev/null)
+    if [ -n "$project_containers" ]; then
+        echo -e "${YELLOW}Project containers to be removed:${NC}"
+        docker ps -a --filter "label=com.docker.compose.project=$project_name" --format "table {{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}"
+        echo
+    else
+        echo -e "${GREEN}No project containers found${NC}"
+    fi
+    
+    # List project volumes
+    local project_volumes=$(docker volume ls -q | grep "^${project_name}_" 2>/dev/null)
+    if [ -n "$project_volumes" ]; then
+        echo -e "${YELLOW}Project volumes to be removed:${NC}"
+        docker volume ls | grep "^${project_name}_"
+        echo
+    else
+        echo -e "${GREEN}No project volumes found${NC}"
+    fi
+    
+    # List project networks
+    local project_networks=$(docker network ls --filter "label=com.docker.compose.project=$project_name" --format "{{.ID}}" 2>/dev/null)
+    if [ -n "$project_networks" ]; then
+        echo -e "${YELLOW}Project networks to be removed:${NC}"
+        docker network ls --filter "label=com.docker.compose.project=$project_name" --format "table {{.ID}}\t{{.Name}}\t{{.Driver}}"
+        echo
+    else
+        echo -e "${GREEN}No project networks found${NC}"
+    fi
+}
+
+# Function to list unused resources
+list_unused_resources() {
+    echo -e "${YELLOW}Unused resources to be removed:${NC}"
+    echo
+    
+    # List stopped containers
+    local stopped_containers=$(docker ps -a --filter "status=exited" --filter "status=created" --format "{{.ID}}" 2>/dev/null)
+    if [ -n "$stopped_containers" ]; then
+        echo -e "${YELLOW}Stopped containers to be removed:${NC}"
+        docker ps -a --filter "status=exited" --filter "status=created" --format "table {{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}"
+        echo
+    else
+        echo -e "${GREEN}No stopped containers to remove${NC}"
+    fi
+    
+    # List unused images (dangling and unused)
+    local unused_images=$(docker images -f "dangling=true" -q 2>/dev/null)
+    if [ -n "$unused_images" ]; then
+        echo -e "${YELLOW}Unused images to be removed:${NC}"
+        docker images -f "dangling=true" --format "table {{.Repository}}\t{{.Tag}}\t{{.ID}}\t{{.Size}}"
+        echo
+    else
+        echo -e "${GREEN}No unused images to remove${NC}"
+    fi
+    
+    # List unused volumes (those not attached to any container)
+    local unused_volumes=$(docker volume ls -q 2>/dev/null)
+    if [ -n "$unused_volumes" ]; then
+        echo -e "${YELLOW}Unused volumes to be removed:${NC}"
+        docker volume ls --format "table {{.Driver}}\t{{.Name}}"
+        echo
+    else
+        echo -e "${GREEN}No unused volumes to remove${NC}"
+    fi
+    
+    # List unused networks (custom networks not used by any container)
+    local unused_networks=$(docker network ls --filter "type=custom" --format "{{.ID}}" 2>/dev/null)
+    if [ -n "$unused_networks" ]; then
+        echo -e "${YELLOW}Unused networks to be removed:${NC}"
+        docker network ls --filter "type=custom" --format "table {{.ID}}\t{{.Name}}\t{{.Driver}}"
+        echo
+    else
+        echo -e "${GREEN}No unused networks to remove${NC}"
+    fi
+}
+
 # Function to clean resources
 clean_resources() {
     while true; do
@@ -262,7 +384,12 @@ clean_resources() {
         
         case $choice in
             1)
-                echo -e "${RED}This will remove ALL Docker resources. Are you sure? (yes/no):${NC}"
+                echo -e "${RED}This will remove ALL Docker resources.${NC}"
+                echo
+                list_containers_to_remove
+                list_images_to_remove
+                list_volumes_to_remove
+                echo -e "${RED}Are you sure you want to remove ALL these resources? (yes/no):${NC}"
                 read -r confirm
                 if [ "$confirm" == "yes" ]; then
                     echo -e "${YELLOW}Stopping all containers...${NC}"
@@ -291,7 +418,10 @@ clean_resources() {
                     project_name=$(get_project_name "$selected_file")
                     echo -e "${YELLOW}Project name: $project_name${NC}"
                     
-                    echo -e "${RED}This will remove all resources for this project. Are you sure? (yes/no):${NC}"
+                    echo -e "${RED}This will remove all resources for this project.${NC}"
+                    echo
+                    list_project_resources "$project_name" "$selected_file"
+                    echo -e "${RED}Are you sure you want to remove all these project resources? (yes/no):${NC}"
                     read -r confirm
                     
                     if [ "$confirm" == "yes" ]; then
@@ -312,21 +442,29 @@ clean_resources() {
                 fi
                 ;;
             3)
-                echo -e "${YELLOW}Removing unused resources...${NC}"
+                echo -e "${RED}This will remove unused Docker resources.${NC}"
+                echo
+                list_unused_resources
+                echo -e "${RED}Are you sure you want to remove these unused resources? (yes/no):${NC}"
+                read -r confirm
                 
-                echo -e "${YELLOW}Removing stopped containers...${NC}"
-                docker container prune -f
-                
-                echo -e "${YELLOW}Removing unused images...${NC}"
-                docker image prune -a -f
-                
-                echo -e "${YELLOW}Removing unused volumes...${NC}"
-                docker volume prune -f
-                
-                echo -e "${YELLOW}Removing unused networks...${NC}"
-                docker network prune -f
-                
-                echo -e "${GREEN}Unused resources removed${NC}"
+                if [ "$confirm" == "yes" ]; then
+                    echo -e "${YELLOW}Removing unused resources...${NC}"
+                    
+                    echo -e "${YELLOW}Removing stopped containers...${NC}"
+                    docker container prune -f
+                    
+                    echo -e "${YELLOW}Removing unused images...${NC}"
+                    docker image prune -a -f
+                    
+                    echo -e "${YELLOW}Removing unused volumes...${NC}"
+                    docker volume prune -f
+                    
+                    echo -e "${YELLOW}Removing unused networks...${NC}"
+                    docker network prune -f
+                    
+                    echo -e "${GREEN}Unused resources removed${NC}"
+                fi
                 ;;
             4)
                 echo -e "${RED}FORCE SYSTEM CLEANUP - This will remove:${NC}"
@@ -336,6 +474,9 @@ clean_resources() {
                 echo -e "${YELLOW}- All build cache${NC}"
                 echo -e "${YELLOW}- All anonymous volumes not used by at least one container${NC}"
                 echo
+                echo -e "${YELLOW}Resources that will be removed:${NC}"
+                echo
+                list_unused_resources
                 echo -e "${RED}This is equivalent to: docker system prune -a --volumes -f${NC}"
                 echo -e "${RED}Are you absolutely sure? (yes/no):${NC}"
                 read -r confirm
