@@ -20,7 +20,8 @@ show_main_menu() {
     echo -e "${GREEN}3.${NC} Manage Containers"
     echo -e "${GREEN}4.${NC} Manage Volumes"
     echo -e "${GREEN}5.${NC} Clean Resources"
-    echo -e "${GREEN}6.${NC} Exit"
+    echo -e "${GREEN}6.${NC} Container Logs"
+    echo -e "${GREEN}7.${NC} Exit"
     echo -e "${CYAN}==================================${NC}"
 }
 
@@ -209,6 +210,98 @@ manage_volumes() {
                 read -r volume_name
                 if [ -n "$volume_name" ]; then
                     docker volume inspect "$volume_name"
+                fi
+                ;;
+            0)
+                return
+                ;;
+            *)
+                echo -e "${RED}Invalid option${NC}"
+                ;;
+        esac
+        
+        if [ "$choice" != "0" ]; then
+            echo -e "${YELLOW}Press Enter to continue...${NC}"
+            read -r
+        fi
+    done
+}
+
+# Function to manage container logs
+manage_container_logs() {
+    while true; do
+        clear
+        echo -e "${CYAN}Container Logs Management${NC}"
+        echo -e "${YELLOW}============================================${NC}"
+        
+        # List running containers
+        echo -e "${GREEN}Running Containers:${NC}"
+        docker ps --format "table {{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}"
+        
+        echo -e "\n${GREEN}All Containers (including stopped):${NC}"
+        docker ps -a --format "table {{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}"
+        
+        echo -e "\n${YELLOW}Options:${NC}"
+        echo "1. View logs for a specific container"
+        echo "2. Follow logs for a specific container"
+        echo "3. View logs with timestamps"
+        echo "4. View logs for last N lines"
+        echo "5. View logs for a docker-compose service"
+        echo "0. Back to main menu"
+        
+        read -r choice
+        
+        case $choice in
+            1)
+                echo -e "${YELLOW}Enter container ID or name:${NC}"
+                read -r container_id
+                if [ -n "$container_id" ]; then
+                    echo -e "${GREEN}Showing logs for container: $container_id${NC}"
+                    echo -e "${YELLOW}Press Ctrl+C to exit logs view${NC}"
+                    docker logs "$container_id"
+                fi
+                ;;
+            2)
+                echo -e "${YELLOW}Enter container ID or name:${NC}"
+                read -r container_id
+                if [ -n "$container_id" ]; then
+                    echo -e "${GREEN}Following logs for container: $container_id${NC}"
+                    echo -e "${YELLOW}Press Ctrl+C to stop following logs${NC}"
+                    docker logs -f "$container_id"
+                fi
+                ;;
+            3)
+                echo -e "${YELLOW}Enter container ID or name:${NC}"
+                read -r container_id
+                if [ -n "$container_id" ]; then
+                    echo -e "${GREEN}Showing logs with timestamps for container: $container_id${NC}"
+                    echo -e "${YELLOW}Press Ctrl+C to exit logs view${NC}"
+                    docker logs -t "$container_id"
+                fi
+                ;;
+            4)
+                echo -e "${YELLOW}Enter container ID or name:${NC}"
+                read -r container_id
+                echo -e "${YELLOW}Enter number of lines to show (default: 50):${NC}"
+                read -r lines
+                if [ -z "$lines" ]; then
+                    lines=50
+                fi
+                if [ -n "$container_id" ]; then
+                    echo -e "${GREEN}Showing last $lines lines for container: $container_id${NC}"
+                    docker logs --tail "$lines" "$container_id"
+                fi
+                ;;
+            5)
+                if find_compose_files; then
+                    echo -e "${GREEN}Selected: $selected_file${NC}"
+                    echo -e "${YELLOW}Enter service name:${NC}"
+                    read -r service_name
+                    if [ -n "$service_name" ]; then
+                        echo -e "${GREEN}Showing logs for service: $service_name${NC}"
+                        echo -e "${YELLOW}Press Ctrl+C to exit logs view${NC}"
+                        docker-compose -f "$selected_file" logs "$service_name"
+                    fi
                 fi
                 ;;
             0)
@@ -640,7 +733,7 @@ main() {
     
     while true; do
         show_main_menu
-        echo -e "${YELLOW}Select an option (1-6):${NC}"
+        echo -e "${YELLOW}Select an option (1-7):${NC}"
         read -r option
         
         case $option in
@@ -660,6 +753,9 @@ main() {
                 clean_resources
                 ;;
             6)
+                manage_container_logs
+                ;;
+            7)
                 echo -e "${GREEN}Exiting...${NC}"
                 exit 0
                 ;;
