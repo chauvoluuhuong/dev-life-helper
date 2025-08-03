@@ -280,6 +280,145 @@ list_volumes_to_remove() {
     fi
 }
 
+# Function to find docker stacks
+find_docker_stacks() {
+    echo -e "${YELLOW}Searching for docker stacks...${NC}"
+    
+    # Get all docker stacks using docker compose ls
+    local stacks=()
+    while IFS= read -r line; do
+        if [ -n "$line" ]; then
+            stacks+=("$line")
+        fi
+    done < <(docker compose ls -q 2>/dev/null)
+    
+    if [ ${#stacks[@]} -eq 0 ]; then
+        echo -e "${RED}No docker stacks found${NC}"
+        return 1
+    fi
+    
+    echo -e "${GREEN}Found docker stacks:${NC}"
+    for i in "${!stacks[@]}"; do
+        echo -e "${BLUE}$((i+1)).${NC} ${stacks[$i]}"
+    done
+    
+    echo -e "${YELLOW}Select a stack (1-${#stacks[@]}) or 0 to cancel:${NC}"
+    read -r selection
+    
+    if [[ "$selection" == "0" ]]; then
+        return 1
+    elif [[ "$selection" =~ ^[0-9]+$ ]] && [ "$selection" -ge 1 ] && [ "$selection" -le "${#stacks[@]}" ]; then
+        selected_stack="${stacks[$((selection-1))]}"
+        return 0
+    else
+        echo -e "${RED}Invalid selection${NC}"
+        return 1
+    fi
+}
+
+# Function to list stack-specific resources
+list_stack_resources() {
+    local stack_name="$1"
+    
+    echo -e "${YELLOW}Stack: $stack_name${NC}"
+    echo
+    
+    # List stack services (using docker compose)
+    local stack_services=$(docker compose -p "$stack_name" ps --services 2>/dev/null)
+    if [ -n "$stack_services" ]; then
+        echo -e "${YELLOW}Stack services to be removed:${NC}"
+        docker compose -p "$stack_name" ps --format "table {{.ID}}\t{{.Service}}\t{{.Image}}\t{{.Status}}"
+        echo
+    else
+        echo -e "${GREEN}No stack services found${NC}"
+    fi
+    
+    # List stack containers (filter by project name)
+    local stack_containers=$(docker ps -a --filter "label=com.docker.compose.project=$stack_name" --format "{{.ID}}" 2>/dev/null)
+    if [ -n "$stack_containers" ]; then
+        echo -e "${YELLOW}Stack containers to be removed:${NC}"
+        docker ps -a --filter "label=com.docker.compose.project=$stack_name" --format "table {{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}"
+        echo
+    else
+        echo -e "${GREEN}No stack containers found${NC}"
+    fi
+    
+    # List stack networks
+    local stack_networks=$(docker network ls --filter "label=com.docker.compose.project=$stack_name" --format "{{.ID}}" 2>/dev/null)
+    if [ -n "$stack_networks" ]; then
+        echo -e "${YELLOW}Stack networks to be removed:${NC}"
+        docker network ls --filter "label=com.docker.compose.project=$stack_name" --format "table {{.ID}}\t{{.Name}}\t{{.Driver}}"
+        echo
+    else
+        echo -e "${GREEN}No stack networks found${NC}"
+    fi
+    
+    # List stack configs
+    local stack_configs=$(docker config ls --filter "label=com.docker.compose.project=$stack_name" --format "{{.ID}}" 2>/dev/null)
+    if [ -n "$stack_configs" ]; then
+        echo -e "${YELLOW}Stack configs to be removed:${NC}"
+        docker config ls --filter "label=com.docker.compose.project=$stack_name" --format "table {{.ID}}\t{{.Name}}\t{{.CreatedAt}}"
+        echo
+    else
+        echo -e "${GREEN}No stack configs found${NC}"
+    fi
+    
+    # List stack secrets
+    local stack_secrets=$(docker secret ls --filter "label=com.docker.compose.project=$stack_name" --format "{{.ID}}" 2>/dev/null)
+    if [ -n "$stack_secrets" ]; then
+        echo -e "${YELLOW}Stack secrets to be removed:${NC}"
+        docker secret ls --filter "label=com.docker.compose.project=$stack_name" --format "table {{.ID}}\t{{.Name}}\t{{.CreatedAt}}"
+        echo
+    else
+        echo -e "${GREEN}No stack secrets found${NC}"
+    fi
+    
+    # List stack volumes (if any are specifically created for this stack)
+    local stack_volumes=$(docker volume ls -q | grep "^${stack_name}_" 2>/dev/null)
+    if [ -n "$stack_volumes" ]; then
+        echo -e "${YELLOW}Stack volumes to be removed:${NC}"
+        docker volume ls | grep "^${stack_name}_"
+        echo
+    else
+        echo -e "${GREEN}No stack volumes found${NC}"
+    fi
+}
+
+# Function to remove stack resources
+remove_stack_resources() {
+    local stack_name="$1"
+    
+    echo -e "${YELLOW}Removing stack: $stack_name${NC}"
+    
+    # Remove the stack using docker compose down
+    echo -e "${YELLOW}Stopping and removing stack services...${NC}"
+    docker compose -p "$stack_name" down
+    
+    # Remove volumes if they exist
+    echo -e "${YELLOW}Removing stack volumes...${NC}"
+    docker compose -p "$stack_name" down -v
+    
+    # Remove images if they exist
+    echo -e "${YELLOW}Removing stack images...${NC}"
+    docker compose -p "$stack_name" down --rmi all
+    
+    # Remove any remaining containers that might be stuck
+    local remaining_containers=$(docker ps -a --filter "label=com.docker.compose.project=$stack_name" --format "{{.ID}}" 2>/dev/null)
+    if [ -n "$remaining_containers" ]; then
+        echo -e "${YELLOW}Removing remaining stack containers...${NC}"
+        docker rm -f $remaining_containers 2>/dev/null
+    fi
+    
+    # Remove any stack-specific volumes
+    local stack_volumes=$(docker volume ls -q | grep "^${stack_name}_" 2>/dev/null)
+    if [ -n "$stack_volumes" ]; then
+        echo -e "${YELLOW}Removing stack volumes...${NC}"
+        docker volume rm -f $stack_volumes 2>/dev/null
+    fi
+    
+    echo -e "${GREEN}Stack resources removed${NC}"
+}
+
 # Function to list project-specific resources
 list_project_resources() {
     local project_name="$1"
@@ -375,7 +514,7 @@ clean_resources() {
         echo -e "${RED}WARNING: These operations cannot be undone!${NC}"
         echo
         echo "1. Remove all resources (containers, images, volumes, networks)"
-        echo "2. Remove resources related to a docker-compose project"
+        echo "2. Remove resources related to a docker stack"
         echo "3. Remove unused resources (dangling images, stopped containers, unused volumes/networks)"
         echo "4. Force system cleanup (docker system prune -a --volumes -f)"
         echo "0. Back to main menu"
@@ -411,33 +550,17 @@ clean_resources() {
                 fi
                 ;;
             2)
-                if find_compose_files; then
-                    echo -e "${GREEN}Selected: $selected_file${NC}"
+                if find_docker_stacks; then
+                    echo -e "${GREEN}Selected stack: $selected_stack${NC}"
                     
-                    # Get project name
-                    project_name=$(get_project_name "$selected_file")
-                    echo -e "${YELLOW}Project name: $project_name${NC}"
-                    
-                    echo -e "${RED}This will remove all resources for this project.${NC}"
+                    echo -e "${RED}This will remove all resources for this stack.${NC}"
                     echo
-                    list_project_resources "$project_name" "$selected_file"
-                    echo -e "${RED}Are you sure you want to remove all these project resources? (yes/no):${NC}"
+                    list_stack_resources "$selected_stack"
+                    echo -e "${RED}Are you sure you want to remove all these stack resources? (yes/no):${NC}"
                     read -r confirm
                     
                     if [ "$confirm" == "yes" ]; then
-                        echo -e "${YELLOW}Stopping project...${NC}"
-                        docker-compose -f "$selected_file" -p "$project_name" down
-                        
-                        echo -e "${YELLOW}Removing project volumes...${NC}"
-                        docker-compose -f "$selected_file" -p "$project_name" down -v
-                        
-                        echo -e "${YELLOW}Removing project images...${NC}"
-                        docker-compose -f "$selected_file" -p "$project_name" down --rmi all
-                        
-                        # Remove any remaining project-specific volumes
-                        docker volume ls -q | grep "^${project_name}_" | xargs -r docker volume rm -f 2>/dev/null
-                        
-                        echo -e "${GREEN}Project resources removed${NC}"
+                        remove_stack_resources "$selected_stack"
                     fi
                 fi
                 ;;
