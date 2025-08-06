@@ -1,0 +1,64 @@
+version: "3.8"
+
+services:
+  # MongoDB Primary
+  mongodb-primary:
+    image: mongo:7.0
+    container_name: mongodb-nosql-primary
+    restart: unless-stopped
+    ports:
+      - "27019:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: superadmin
+      MONGO_INITDB_ROOT_PASSWORD: superpass
+      MONGO_INITDB_DATABASE: productiondb
+    volumes:
+      - nosql_data:/data/db
+    networks:
+      - nosql-network
+    command: mongod --replSet rs0
+
+  # MongoDB Secondary (for replica set demo)
+  mongodb-secondary:
+    image: mongo:7.0
+    container_name: mongodb-nosql-secondary
+    restart: unless-stopped
+    ports:
+      - "27020:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: superadmin
+      MONGO_INITDB_ROOT_PASSWORD: superpass
+    depends_on:
+      - mongodb-primary
+    networks:
+      - nosql-network
+    command: mongod --replSet rs0
+
+  # AdminMongo - Simple MongoDB admin interface
+  adminmongo:
+    image: mrvautin/adminmongo:latest
+    container_name: adminmongo-ui
+    restart: unless-stopped
+    ports:
+      - "1234:1234"
+    environment:
+      HOST: 0.0.0.0
+      PORT: 1234
+      CONN_NAME: MongoDB-Cluster
+      DB_HOST: mongodb-primary
+      DB_PORT: 27017
+      DB_USERNAME: superadmin
+      DB_PASSWORD: superpass
+    depends_on:
+      - mongodb-primary
+      - mongodb-secondary
+    networks:
+      - nosql-network
+
+volumes:
+  nosql_data:
+    driver: local
+
+networks:
+  nosql-network:
+    driver: bridge
