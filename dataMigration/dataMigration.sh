@@ -22,6 +22,9 @@ DEFAULT_PASSWORD="postgres"
 BACKUP_DIR="./dump"
 DATE=$(date +"%Y%m%d_%H%M%S")
 
+# Environment file for storing credentials
+ENV_FILE="./.env"
+
 # Databases to exclude from migration (system databases)
 EXCLUDE_DBS=("template0" "template1" "postgres" "rdsadmin")
 
@@ -30,6 +33,73 @@ echo ""
 
 # Create backup directory if it doesn't exist
 mkdir -p "$BACKUP_DIR"
+
+# Function to load credentials from environment file
+load_credentials() {
+    if [ -f "$ENV_FILE" ]; then
+        echo -e "${BLUE}Found existing environment file. Loading credentials...${NC}"
+        source "$ENV_FILE"
+        
+        # Set variables from environment file if they exist
+        if [ -n "$TARGET_DB_HOST" ]; then TARGET_HOST="$TARGET_DB_HOST"; fi
+        if [ -n "$TARGET_DB_PORT" ]; then TARGET_PORT="$TARGET_DB_PORT"; fi
+        if [ -n "$TARGET_DB_USERNAME" ]; then TARGET_USERNAME="$TARGET_DB_USERNAME"; fi
+        if [ -n "$TARGET_DB_PASSWORD" ]; then TARGET_PASSWORD="$TARGET_DB_PASSWORD"; fi
+        
+        if [ -n "$SOURCE_DB_HOST" ]; then SOURCE_HOST="$SOURCE_DB_HOST"; fi
+        if [ -n "$SOURCE_DB_PORT" ]; then SOURCE_PORT="$SOURCE_DB_PORT"; fi
+        if [ -n "$SOURCE_DB_USERNAME" ]; then SOURCE_USERNAME="$SOURCE_DB_USERNAME"; fi
+        if [ -n "$SOURCE_DB_PASSWORD" ]; then SOURCE_PASSWORD="$SOURCE_DB_PASSWORD"; fi
+        
+        echo -e "${GREEN}✓ Credentials loaded from environment file${NC}"
+        return 0
+    fi
+    return 1
+}
+
+# Function to save credentials to environment file
+save_credentials() {
+    echo -e "${YELLOW}=== Save Credentials ===${NC}"
+    echo -e "${YELLOW}Do you want to save these credentials to an environment file for future use? (y/N):${NC}"
+    read -r save_creds
+    
+    if [[ $save_creds =~ ^[Yy]$ ]]; then
+        echo "# Database Migration Credentials" > "$ENV_FILE"
+        echo "# Generated on $(date)" >> "$ENV_FILE"
+        echo "" >> "$ENV_FILE"
+        echo "# Target Database Configuration" >> "$ENV_FILE"
+        echo "TARGET_DB_HOST=\"$TARGET_HOST\"" >> "$ENV_FILE"
+        echo "TARGET_DB_PORT=\"$TARGET_PORT\"" >> "$ENV_FILE"
+        echo "TARGET_DB_USERNAME=\"$TARGET_USERNAME\"" >> "$ENV_FILE"
+        echo "TARGET_DB_PASSWORD=\"$TARGET_PASSWORD\"" >> "$ENV_FILE"
+        
+        if [ "$RESTORE_FROM_DUMP" = false ]; then
+            echo "" >> "$ENV_FILE"
+            echo "# Source Database Configuration" >> "$ENV_FILE"
+            echo "SOURCE_DB_HOST=\"$SOURCE_HOST\"" >> "$ENV_FILE"
+            echo "SOURCE_DB_PORT=\"$SOURCE_PORT\"" >> "$ENV_FILE"
+            echo "SOURCE_DB_USERNAME=\"$SOURCE_USERNAME\"" >> "$ENV_FILE"
+            echo "SOURCE_DB_PASSWORD=\"$SOURCE_PASSWORD\"" >> "$ENV_FILE"
+        fi
+        
+        chmod 600 "$ENV_FILE"  # Restrict permissions for security
+        echo -e "${GREEN}✓ Credentials saved to $ENV_FILE${NC}"
+        echo -e "${YELLOW}Note: File permissions set to 600 for security${NC}"
+    fi
+}
+
+# Check for existing credentials and ask if user wants to use them
+USE_EXISTING_CREDS=false
+if [ -f "$ENV_FILE" ]; then
+    echo -e "${YELLOW}=== Existing Credentials Found ===${NC}"
+    echo -e "${YELLOW}Found existing credentials file. Do you want to use saved credentials? (y/N):${NC}"
+    read -r use_existing
+    if [[ $use_existing =~ ^[Yy]$ ]]; then
+        USE_EXISTING_CREDS=true
+        load_credentials
+    fi
+    echo ""
+fi
 
 # Ask if user wants to remove all data in target database first
 echo -e "${YELLOW}=== Target Database Cleanup ===${NC}"
@@ -67,31 +137,33 @@ fi
 echo ""
 
 # Get target database credentials (always needed)
-echo -e "${YELLOW}=== Target Database Configuration ===${NC}"
-echo -n "Enter target database host (default: $DEFAULT_HOST): "
-read TARGET_HOST
-if [ -z "$TARGET_HOST" ]; then
-    TARGET_HOST="$DEFAULT_HOST"
+if [ "$USE_EXISTING_CREDS" = false ]; then
+    echo -e "${YELLOW}=== Target Database Configuration ===${NC}"
+    echo -n "Enter target database host (default: $DEFAULT_HOST): "
+    read TARGET_HOST
+    if [ -z "$TARGET_HOST" ]; then
+        TARGET_HOST="$DEFAULT_HOST"
+    fi
+    echo -n "Enter target database port (default: $DEFAULT_PORT): "
+    read TARGET_PORT
+    if [ -z "$TARGET_PORT" ]; then
+        TARGET_PORT="$DEFAULT_PORT"
+    fi
+    echo -n "Enter target database username (default: $DEFAULT_USERNAME): "
+    read TARGET_USERNAME
+    if [ -z "$TARGET_USERNAME" ]; then
+        TARGET_USERNAME="$DEFAULT_USERNAME"
+    fi
+    echo -n "Enter target database password (default: $DEFAULT_PASSWORD): "
+    read -s TARGET_PASSWORD
+    if [ -z "$TARGET_PASSWORD" ]; then
+        TARGET_PASSWORD="$DEFAULT_PASSWORD"
+    fi
+    echo ""
 fi
-echo -n "Enter target database port (default: $DEFAULT_PORT): "
-read TARGET_PORT
-if [ -z "$TARGET_PORT" ]; then
-    TARGET_PORT="$DEFAULT_PORT"
-fi
-echo -n "Enter target database username (default: $DEFAULT_USERNAME): "
-read TARGET_USERNAME
-if [ -z "$TARGET_USERNAME" ]; then
-    TARGET_USERNAME="$DEFAULT_USERNAME"
-fi
-echo -n "Enter target database password (default: $DEFAULT_PASSWORD): "
-read -s TARGET_PASSWORD
-if [ -z "$TARGET_PASSWORD" ]; then
-    TARGET_PASSWORD="$DEFAULT_PASSWORD"
-fi
-echo ""
 
-# Get source database credentials only if not restoring from dump
-if [ "$RESTORE_FROM_DUMP" = false ]; then
+# Get source database credentials only if not restoring from dump and not using existing credentials
+if [ "$RESTORE_FROM_DUMP" = false ] && [ "$USE_EXISTING_CREDS" = false ]; then
     echo ""
     echo -e "${YELLOW}=== Source Database Configuration ===${NC}"
     echo -n "Enter source database host (default: $DEFAULT_HOST): "
@@ -392,6 +464,12 @@ done
 
 # Cleanup
 unset PGPASSWORD
+
+# Ask if user wants to save credentials (only if not using existing credentials)
+if [ "$USE_EXISTING_CREDS" = false ]; then
+    save_credentials
+    echo ""
+fi
 
 echo -e "${BLUE}=== Migration Summary ===${NC}"
 if [ "$RESTORE_FROM_DUMP" = false ]; then
