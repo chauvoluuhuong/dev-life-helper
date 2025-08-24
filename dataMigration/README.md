@@ -48,7 +48,17 @@ brew install postgresql
 **Ubuntu/Debian:**
 
 ```bash
-sudo apt update && sudo apt install postgresql-client
+sudo apt update && sudo apt install postgresql-client libpq-dev
+```
+
+**CentOS/RHEL/Fedora:**
+
+```bash
+# CentOS/RHEL
+sudo yum install postgresql libpq-devel
+
+# Fedora
+sudo dnf install postgresql libpq-devel
 ```
 
 ## Testing
