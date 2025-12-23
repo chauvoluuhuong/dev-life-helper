@@ -1,3 +1,6 @@
 **/dump
 
 **/.env
+**/backups
+
+**/credential.txt
