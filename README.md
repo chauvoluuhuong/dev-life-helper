@@ -1,5 +1,57 @@
 # Scripts code that make my life easier
 
+## 🚀 Quick Start - Setup All Scripts Globally
+
+Before using any individual scripts, run the `setup.sh` script to make all scripts executable and globally accessible:
+
+### Step 1: Make setup.sh executable
+
+```bash
+chmod +x setup.sh
+```
+
+### Step 2: Run the setup script
+
+```bash
+# Preview what will be done (recommended first)
+./setup.sh --dry-run
+
+# Set up all scripts globally (no sudo required)
+./setup.sh --local
+
+# Or use system-wide installation (requires sudo)
+sudo ./setup.sh
+```
+
+### What setup.sh does
+
+- 🔍 **Finds all `.sh` files** recursively in the project
+- ⚡ **Makes them executable** with `chmod +x`
+- 🌐 **Creates global symlinks** so you can run scripts from anywhere
+- 🛡️ **Safe operation** with dry-run mode to preview changes
+
+### Available options
+
+- `--dry-run`: Preview changes without making them
+- `--local`: Use `~/.local/bin` (no sudo needed)
+- `--remove`: Remove all created symlinks
+- `--help`: Show usage information
+
+### After setup, you can run scripts globally:
+
+```bash
+# Instead of ./killProcessUsingPort.sh 3000
+killProcessUsingPort 3000
+
+# Instead of ./dataMigration/dataMigration.sh
+dataMigration
+
+# Instead of ./dockerUtils/docker-manager.sh
+docker-manager
+```
+
+---
+
 ## killProcessUsingPort.sh
 
 A utility script to kill processes using a specific port. Useful when you need to free up a port that's already in use.
