@@ -29,7 +29,7 @@ BACKUP_DIR="$BACKUP_BASE_DIR/${DATE}_backup"
 CREDENTIAL_FILE="./credential.txt"
 
 # Databases to exclude from migration (system databases)
-EXCLUDE_DBS=("admin" "local" "config")
+EXCLUDE_DBS=("local" "config")
 
 echo -e "${BLUE}=== MongoDB Migration: Source to Target ===${NC}"
 echo ""
