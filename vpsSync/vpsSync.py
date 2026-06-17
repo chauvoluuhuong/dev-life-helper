@@ -84,10 +84,132 @@ def save_project_target(local_path, connection_name, destination, ignores):
     }
     save_json(PROJECTS_FILE, projects)
 
-def select_or_create_connection():
-    connections = get_connections()
-    
+def manage_profile_actions(name):
     while True:
+        connections = get_connections()
+        if name not in connections:
+            print(f"{RED}Profile '{name}' no longer exists.{RESET}")
+            return
+            
+        conn = connections[name]
+        print_header(f"Profile: {name}")
+        print(f"  - Host     : {conn['host']}")
+        print(f"  - Port     : {conn['port']}")
+        print(f"  - Username : {conn['username']}")
+        auth_type = conn['auth']['type']
+        if auth_type == 'password':
+            print(f"  - Auth     : Password (masked)")
+        else:
+            print(f"  - Auth     : SSH Key ({conn['auth']['key_path']})")
+            
+        print("\nSelect an action:")
+        print("  [1] Edit Host")
+        print("  [2] Edit Port")
+        print("  [3] Edit Username")
+        print("  [4] Edit Authentication (Password/Key)")
+        print("  [5] Rename Profile")
+        print("  [6] Delete Profile")
+        print("  [b] Back")
+        
+        choice = input("\nEnter choice (1-6, b): ").strip()
+        if choice.lower() == 'b':
+            return
+            
+        if choice == '1':
+            new_host = input(f"Enter new host (current: {conn['host']}): ").strip()
+            if new_host:
+                conn['host'] = new_host
+                save_connection(name, conn)
+                print(f"{GREEN}Host updated successfully.{RESET}")
+        elif choice == '2':
+            new_port = input(f"Enter new port (current: {conn['port']}): ").strip()
+            if new_port:
+                while not new_port.isdigit():
+                    new_port = input(f"{RED}Port must be a number. Enter new port: {RESET}").strip()
+                conn['port'] = int(new_port)
+                save_connection(name, conn)
+                print(f"{GREEN}Port updated successfully.{RESET}")
+        elif choice == '3':
+            new_user = input(f"Enter new username (current: {conn['username']}): ").strip()
+            if new_user:
+                conn['username'] = new_user
+                save_connection(name, conn)
+                print(f"{GREEN}Username updated successfully.{RESET}")
+        elif choice == '4':
+            print("\nSelect new authentication method:")
+            print("  [1] Username & Password")
+            print("  [2] SSH Private Key File")
+            auth_choice = ""
+            while auth_choice not in ['1', '2']:
+                auth_choice = input("Select method (1 or 2): ").strip()
+            if auth_choice == '1':
+                password = getpass.getpass("Enter SSH Password (will be masked): ")
+                conn['auth'] = {
+                    "type": "password",
+                    "password": password
+                }
+            else:
+                key_path = input("Enter SSH Key path (default: ~/.ssh/id_rsa): ").strip()
+                if not key_path:
+                    key_path = os.path.expanduser("~/.ssh/id_rsa")
+                else:
+                    key_path = os.path.expanduser(key_path)
+                conn['auth'] = {
+                    "type": "key",
+                    "key_path": key_path
+                }
+            save_connection(name, conn)
+            print(f"{GREEN}Authentication updated successfully.{RESET}")
+        elif choice == '5':
+            new_name = input(f"Enter new profile name (current: {name}): ").strip()
+            if new_name and new_name != name:
+                if new_name in connections:
+                    print(f"{RED}A profile named '{new_name}' already exists.{RESET}")
+                else:
+                    connections[new_name] = conn
+                    del connections[name]
+                    save_json(CONNECTIONS_FILE, connections)
+                    print(f"{GREEN}Profile renamed to '{new_name}' successfully.{RESET}")
+                    name = new_name
+        elif choice == '6':
+            confirm = input(f"{RED}Are you sure you want to delete profile '{name}'? (y/N): {RESET}").strip().lower()
+            if confirm == 'y':
+                del connections[name]
+                save_json(CONNECTIONS_FILE, connections)
+                print(f"{GREEN}Profile '{name}' deleted successfully.{RESET}")
+                return
+
+def manage_connections_menu():
+    while True:
+        connections = get_connections()
+        print_header("Manage Connection Profiles")
+        if not connections:
+            print("No connection profiles found.")
+            input("\nPress Enter to return...")
+            return
+            
+        print("Select a connection profile to edit/delete:")
+        profile_names = list(connections.keys())
+        for idx, name in enumerate(profile_names, 1):
+            conn = connections[name]
+            print(f"  [{idx}] {BOLD}{name}{RESET} ({conn['username']}@{conn['host']}:{conn['port']})")
+        print(f"  [b] Back")
+        
+        choice = input(f"\nEnter choice (1-{len(profile_names)}, b): ").strip()
+        if choice.lower() == 'b':
+            return
+            
+        if choice.isdigit():
+            val = int(choice)
+            if 1 <= val <= len(profile_names):
+                name = profile_names[val - 1]
+                manage_profile_actions(name)
+                continue
+        print(f"{RED}Invalid selection. Please try again.{RESET}")
+
+def select_or_create_connection():
+    while True:
+        connections = get_connections()
         print_header("VPS Connection Setup")
         if connections:
             print("Select an existing connection profile or create a new one:")
@@ -96,12 +218,16 @@ def select_or_create_connection():
                 conn = connections[name]
                 print(f"  [{idx}] {BOLD}{name}{RESET} ({conn['username']}@{conn['host']}:{conn['port']})")
             print(f"  [{len(profile_names) + 1}] Create a new VPS connection profile...")
+            print(f"  [m] Manage connection profiles (Edit/Delete)...")
             print(f"  [q] Quit")
             
-            choice = input(f"\nEnter choice (1-{len(profile_names) + 1}, q): ").strip()
+            choice = input(f"\nEnter choice (1-{len(profile_names) + 1}, m, q): ").strip()
             if choice.lower() == 'q':
                 print(f"{YELLOW}Operation cancelled by user.{RESET}")
                 sys.exit(0)
+            if choice.lower() == 'm':
+                manage_connections_menu()
+                continue
             
             if choice.isdigit():
                 val = int(choice)
@@ -321,85 +447,111 @@ def ensure_remote_dir(connection_info, destination):
         except Exception as e:
             print(f"{YELLOW}Warning: Error verifying remote directory: {e}. Attempting sync anyway...{RESET}")
 
-def run_sync(connection_info, ignores, destination):
+def parse_rsync_line(line):
+    line = line.strip()
+    if not line:
+        return None
+    parts = line.split(' ', 1)
+    if len(parts) != 2:
+        return None
+    status, path = parts
+    if len(status) < 2:
+        return None
+    file_type = status[1]
+    return status, path, file_type
+
+def build_rsync_cmd(connection_info, ignores, destination, dry_run=False, force_copy=False):
     local_dir = os.getcwd()
     host = connection_info['host']
     port = connection_info['port']
     username = connection_info['username']
     auth = connection_info['auth']
-
-    print_header("Sync Summary")
-    print(f"  Local Source  : {BOLD}{local_dir}{RESET}")
-    print(f"  Remote Dest   : {BOLD}{username}@{host}:{destination}{RESET}")
-    print(f"  SSH Port      : {port}")
-    print(f"  Ignored items : {', '.join(ignores) if ignores else 'None'}")
-    auth_desc = "Password" if auth['type'] == 'password' else f"SSH Key ({auth['key_path']})"
-    print(f"  Auth Method   : {auth_desc}")
     
-    # Pre-create the directory on the VPS recursively
-    ensure_remote_dir(connection_info, destination)
-    
-    dry_run_input = input(f"\nDo you want to run a Dry Run first? (Y/n): ").strip().lower()
-    dry_run = dry_run_input != 'n'
-
-    # Build the rsync command
-    rsync_cmd = ["rsync", "-avz"]
-    
-    # Add exclude arguments
-    for item in ignores:
-        rsync_cmd.append(f"--exclude={item}")
-        
     if dry_run:
-        rsync_cmd.append("--dry-run")
-        print(f"\n{YELLOW}--- STARTING DRY RUN (No changes will be made) ---{RESET}\n")
+        cmd = ["rsync", "-az", "--dry-run", "--out-format=%i %n"]
     else:
-        print(f"\n{GREEN}--- STARTING RECURSIVE COPY TO VPS ---{RESET}\n")
-
-    # Handle SSH Key auth vs Password auth
+        cmd = ["rsync", "-az", "--out-format=%i %n"]
+        
+    if force_copy:
+        cmd.append("--ignore-times")
+        
+    for item in ignores:
+        cmd.append(f"--exclude={item}")
+        
     if auth['type'] == 'key':
         ssh_key_path = auth['key_path']
-        rsync_cmd.extend([
+        cmd.extend([
             "-e", 
-            f"ssh -p {port} -i {sh_key_path} -o StrictHostKeyChecking=no", 
+            f"ssh -p {port} -i {ssh_key_path} -o StrictHostKeyChecking=no", 
             f"{local_dir}/", 
             f"{username}@{host}:{destination}"
         ])
-        
-        try:
-            subprocess.run(rsync_cmd, stdout=sys.stdout, stderr=sys.stderr, check=True)
-            if dry_run:
-                print(f"\n{GREEN}Dry run completed successfully! Review the listed changes above.{RESET}")
-                run_real_sync = input("Do you want to perform the actual copy now? (y/N): ").strip().lower()
-                if run_real_sync == 'y':
-                    # Recursive call but without dry run
-                    # Temporarily mutate the command to remove dry run
-                    rsync_cmd.remove("--dry-run")
-                    print(f"\n{GREEN}--- STARTING RECURSIVE COPY TO VPS ---{RESET}\n")
-                    subprocess.run(rsync_cmd, stdout=sys.stdout, stderr=sys.stderr, check=True)
-                    print(f"\n{GREEN}Sync successfully completed!{RESET}")
-            else:
-                print(f"\n{GREEN}Sync successfully completed!{RESET}")
-        except subprocess.CalledProcessError as e:
-            print(f"\n{RED}Error: Sync command failed with exit code {e.returncode}{RESET}")
-            sys.exit(1)
-            
     elif auth['type'] == 'password':
-        password = auth['password']
-        rsync_cmd.extend([
+        cmd.extend([
             "-e", 
             f"ssh -p {port} -o StrictHostKeyChecking=no", 
             f"{local_dir}/", 
             f"{username}@{host}:{destination}"
         ])
-        
-        # Escape command properly using shell join
-        escaped_cmd = shlex.join(rsync_cmd)
-        
-        # Prepare environment with the password to pass securely to expect without escaping issues
+    return cmd
+
+def run_rsync_operation(cmd, connection_info, show_output=True, dry_run=False):
+    auth = connection_info['auth']
+    output_lines = []
+    success = False
+    
+    if auth['type'] == 'key':
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            
+            for line in proc.stdout:
+                output_lines.append(line)
+                if show_output:
+                    parsed = parse_rsync_line(line)
+                    if parsed:
+                        status, path, ftype = parsed
+                        if path in ('.', './'):
+                            continue
+                        if dry_run:
+                            if ftype == 'f':
+                                print(f"  {YELLOW}→{RESET} {path}")
+                            elif ftype == 'd':
+                                print(f"  {BLUE}📁{RESET} {path}/")
+                            elif ftype in ('L', 'l'):
+                                print(f"  {YELLOW}🔗{RESET} {path}")
+                        else:
+                            if ftype == 'f':
+                                print(f"  {GREEN}✓{RESET} {path}")
+                            elif ftype == 'd':
+                                print(f"  {BLUE}📁{RESET} {path}/")
+                            elif ftype in ('L', 'l'):
+                                print(f"  {GREEN}🔗{RESET} {path}")
+            
+            proc.wait()
+            stderr_content = proc.stderr.read()
+            if proc.returncode == 0:
+                success = True
+            else:
+                if stderr_content.strip():
+                    print(f"{RED}Error: {stderr_content.strip()}{RESET}")
+                else:
+                    for line in output_lines:
+                        if not parse_rsync_line(line):
+                            print(f"{RED}{line.strip()}{RESET}")
+        except Exception as e:
+            print(f"{RED}Error executing rsync: {e}{RESET}")
+            
+    elif auth['type'] == 'password':
+        password = auth['password']
+        escaped_cmd = shlex.join(cmd)
         env = os.environ.copy()
         env["SYNC_PASSWORD"] = password
-
-        # Use macOS expect to safely feed password interactively
+        
         expect_script = f"""
         set timeout -1
         set pass $env(SYNC_PASSWORD)
@@ -421,160 +573,284 @@ def run_sync(connection_info, ignores, destination):
             proc = subprocess.Popen(
                 ["/usr/bin/expect"],
                 stdin=subprocess.PIPE,
-                stdout=sys.stdout,
-                stderr=sys.stderr,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
                 env=env
             )
-            proc.communicate(input=expect_script)
+            proc.stdin.write(expect_script)
+            proc.stdin.close()
             
-            if proc.returncode == 0:
-                if dry_run:
-                    print(f"\n{GREEN}Dry run completed successfully! Review the listed changes above.{RESET}")
-                    run_real_sync = input("Do you want to perform the actual copy now? (y/N): ").strip().lower()
-                    if run_real_sync == 'y':
-                        # Run actual copy
-                        rsync_cmd.remove("--dry-run")
-                        escaped_cmd_real = shlex.join(rsync_cmd)
-                        
-                        # Prepare environment with the password
-                        env_real = os.environ.copy()
-                        env_real["SYNC_PASSWORD"] = password
-
-                        expect_script_real = f"""
-                        set timeout -1
-                        set pass $env(SYNC_PASSWORD)
-                        spawn bash -c {{{escaped_cmd_real}}}
-                        expect {{
-                            "Are you sure you want to continue connecting" {{
-                                send "yes\\r"
-                                exp_continue
-                            }}
-                            "password:" {{
-                                send "$pass\\r"
-                                exp_continue
-                            }}
-                            eof
-                        }}
-                        """
-                        print(f"\n{GREEN}--- STARTING RECURSIVE COPY TO VPS ---{RESET}\n")
-                        proc_real = subprocess.Popen(
-                            ["/usr/bin/expect"],
-                            stdin=subprocess.PIPE,
-                            stdout=sys.stdout,
-                            stderr=sys.stderr,
-                            text=True,
-                            env=env_real
-                        )
-                        proc_real.communicate(input=expect_script_real)
-                        if proc_real.returncode == 0:
-                            print(f"\n{GREEN}Sync successfully completed!{RESET}")
+            for line in proc.stdout:
+                output_lines.append(line)
+                parsed = parse_rsync_line(line)
+                if parsed:
+                    status, path, ftype = parsed
+                    if path in ('.', './'):
+                        continue
+                    if show_output:
+                        if dry_run:
+                            if ftype == 'f':
+                                print(f"  {YELLOW}→{RESET} {path}")
+                            elif ftype == 'd':
+                                print(f"  {BLUE}📁{RESET} {path}/")
+                            elif ftype in ('L', 'l'):
+                                print(f"  {YELLOW}🔗{RESET} {path}")
                         else:
-                            print(f"\n{RED}Error: Sync command failed.{RESET}")
-                            sys.exit(1)
+                            if ftype == 'f':
+                                print(f"  {GREEN}✓{RESET} {path}")
+                            elif ftype == 'd':
+                                print(f"  {BLUE}📁{RESET} {path}/")
+                            elif ftype in ('L', 'l'):
+                                print(f"  {GREEN}🔗{RESET} {path}")
                 else:
-                    print(f"\n{GREEN}Sync successfully completed!{RESET}")
+                    cleaned = line.strip()
+                    if cleaned and show_output:
+                        if "password:" in cleaned or "connecting (yes/no)" in cleaned:
+                            pass
+                        elif "spawn bash -c" in cleaned:
+                            pass
+                        else:
+                            print(f"  {cleaned}")
+            
+            proc.wait()
+            if proc.returncode == 0:
+                success = True
+                for line in output_lines:
+                    if "rsync error:" in line or "Connection refused" in line or "Permission denied" in line:
+                        success = False
             else:
-                print(f"\n{RED}Error: Sync command failed.{RESET}")
-                sys.exit(1)
+                success = False
         except Exception as e:
-            print(f"\n{RED}Error executing expect script: {e}{RESET}")
-            sys.exit(1)
+            print(f"{RED}Error executing expect script: {e}{RESET}")
+            
+    return output_lines, success
+
+def count_changes(output_lines):
+    files = 0
+    dirs = 0
+    symlinks = 0
+    for line in output_lines:
+        parsed = parse_rsync_line(line)
+        if parsed:
+            status, path, ftype = parsed
+            if path in ('.', './'):
+                continue
+            if ftype == 'f':
+                files += 1
+            elif ftype == 'd':
+                dirs += 1
+            elif ftype in ('L', 'l'):
+                symlinks += 1
+    return files, dirs, symlinks
+
+def run_sync(connection_info, ignores, destination, force_copy=False):
+    local_dir = os.getcwd()
+    host = connection_info['host']
+    port = connection_info['port']
+    username = connection_info['username']
+    auth = connection_info['auth']
+
+    print_header("Sync Summary")
+    print(f"  Local Source  : {BOLD}{local_dir}{RESET}")
+    print(f"  Remote Dest   : {BOLD}{username}@{host}:{destination}{RESET}")
+    print(f"  SSH Port      : {port}")
+    print(f"  Ignored items : {', '.join(ignores) if ignores else 'None'}")
+    auth_desc = "Password" if auth['type'] == 'password' else f"SSH Key ({auth['key_path']})"
+    print(f"  Auth Method   : {auth_desc}")
+    if force_copy:
+        print(f"  Mode Override : {BOLD}{YELLOW}Force Copy All Files (Ignore Times){RESET}")
+    
+    # Pre-create the directory on the VPS recursively
+    ensure_remote_dir(connection_info, destination)
+    
+    print_header("Detecting Changes")
+    print("Scanning local directory and comparing with remote VPS...")
+    
+    # Run dry run silently first to detect changes and counts
+    dry_run_cmd = build_rsync_cmd(connection_info, ignores, destination, dry_run=True, force_copy=force_copy)
+    output_lines, success = run_rsync_operation(dry_run_cmd, connection_info, show_output=False, dry_run=True)
+    
+    if not success:
+        print(f"\n{RED}Error: Failed to perform change detection.{RESET}")
+        sys.exit(1)
+        
+    files, dirs, symlinks = count_changes(output_lines)
+    
+    if files == 0 and dirs == 0 and symlinks == 0:
+        print(f"\n{GREEN}✓ Everything is up to date. No files to sync.{RESET}")
+        return
+        
+    print(f"\n{BOLD}Changes detected:{RESET}")
+    # Print the cached changes
+    for line in output_lines:
+        parsed = parse_rsync_line(line)
+        if parsed:
+            status, path, ftype = parsed
+            if path in ('.', './'):
+                continue
+            if ftype == 'f':
+                print(f"  {YELLOW}→{RESET} {path}")
+            elif ftype == 'd':
+                print(f"  {BLUE}📁{RESET} {path}/")
+            elif ftype in ('L', 'l'):
+                print(f"  {YELLOW}🔗{RESET} {path}")
+                
+    print_header("Sync Details")
+    if files > 0:
+        print(f"  - Files to sync         : {BOLD}{files}{RESET}")
+    if dirs > 0:
+        print(f"  - Directories to create : {BOLD}{dirs}{RESET}")
+    if symlinks > 0:
+        print(f"  - Symlinks to sync      : {BOLD}{symlinks}{RESET}")
+        
+    confirm = input(f"\nDo you want to proceed with the sync? (y/N): ").strip().lower()
+    if confirm != 'y':
+        print(f"\n{YELLOW}Sync cancelled by user.{RESET}")
+        return
+        
+    print(f"\n{GREEN}--- STARTING RECURSIVE COPY TO VPS ---{RESET}\n")
+    sync_cmd = build_rsync_cmd(connection_info, ignores, destination, dry_run=False, force_copy=force_copy)
+    output_lines, success = run_rsync_operation(sync_cmd, connection_info, show_output=True, dry_run=False)
+    
+    if success:
+        synced_files, synced_dirs, synced_symlinks = count_changes(output_lines)
+        print_header("Sync Successful")
+        if synced_files > 0:
+            print(f"  {GREEN}✓{RESET} Files synced successfully: {BOLD}{synced_files}{RESET}")
+        if synced_dirs > 0:
+            print(f"  {GREEN}✓{RESET} Directories created/updated: {BOLD}{synced_dirs}{RESET}")
+        if synced_symlinks > 0:
+            print(f"  {GREEN}✓{RESET} Symlinks synced successfully: {BOLD}{synced_symlinks}{RESET}")
+        if synced_files == 0 and synced_dirs == 0 and synced_symlinks == 0:
+            print(f"  {GREEN}✓{RESET} Sync completed, but no changes were necessary.")
+    else:
+        print(f"\n{RED}Error: Sync command failed.{RESET}")
+        sys.exit(1)
 
 def main():
     try:
         init_config()
         local_dir = os.getcwd()
-        projects = get_projects()
-        connections = get_connections()
         
-        connection_name = None
-        connection_info = None
-        ignores = None
-        destination = None
-        
-        # Check if saved targets exist for this folder
-        if local_dir in projects and projects[local_dir]:
-            folder_targets = projects[local_dir]
+        while True:
+            projects = get_projects()
+            connections = get_connections()
             
-            # Filter out targets whose connection profiles have been deleted
-            active_targets = [t for t in folder_targets.keys() if t in connections]
+            connection_name = None
+            connection_info = None
+            ignores = None
+            destination = None
             
-            if active_targets:
-                print_header("Saved Sync Targets Found")
-                print(f"Folder: {BOLD}{local_dir}{RESET}")
-                print("Select a saved VPS sync target to use, or set up a new one:")
+            # Check if saved targets exist for this folder
+            if local_dir in projects and projects[local_dir]:
+                folder_targets = projects[local_dir]
                 
-                for idx, t_name in enumerate(active_targets, 1):
-                    t_info = folder_targets[t_name]
-                    conn = connections[t_name]
-                    print(f"  [{idx}] {BOLD}{t_name}{RESET} (Dest: {t_info['destination']}, Server: {conn['username']}@{conn['host']})")
+                # Filter out targets whose connection profiles have been deleted
+                active_targets = [t for t in folder_targets.keys() if t in connections]
+                
+                if active_targets:
+                    print_header("Saved Sync Targets Found")
+                    print(f"Folder: {BOLD}{local_dir}{RESET}")
+                    print("Select a saved VPS sync target to use, or set up a new one:")
                     
-                new_target_idx = len(active_targets) + 1
-                print(f"  [{new_target_idx}] Sync to a new connection profile...")
-                print(f"  [q] Quit")
-                
-                choice = input(f"\nSelect choice (1-{new_target_idx}, q) [default: 1]: ").strip()
-                if not choice:
-                    choice = "1"
-                
-                if choice.lower() == 'q':
-                    print(f"{YELLOW}Operation cancelled by user.{RESET}")
-                    sys.exit(0)
+                    for idx, t_name in enumerate(active_targets, 1):
+                        t_info = folder_targets[t_name]
+                        conn = connections[t_name]
+                        print(f"  [{idx}] {BOLD}{t_name}{RESET} (Dest: {t_info['destination']}, Server: {conn['username']}@{conn['host']})")
+                        
+                    new_target_idx = len(active_targets) + 1
+                    print(f"  [{new_target_idx}] Sync to a new connection profile...")
+                    print(f"  [m] Manage connection profiles (Edit/Delete)...")
+                    print(f"  [q] Quit")
                     
-                if choice.isdigit():
-                    val = int(choice)
-                    if 1 <= val <= len(active_targets):
-                        connection_name = active_targets[val - 1]
-                        connection_info = connections[connection_name]
-                        target_config = folder_targets[connection_name]
-                        destination = target_config["destination"]
-                        ignores = target_config["ignores"]
-                        print(f"{GREEN}Using saved settings for target: {connection_name}{RESET}")
-                    elif val == new_target_idx:
-                        pass # Proceed to new connection setup flow
+                    choice = input(f"\nSelect choice (1-{new_target_idx}, m, q) [default: 1]: ").strip()
+                    if not choice:
+                        choice = "1"
+                    
+                    if choice.lower() == 'q':
+                        print(f"{YELLOW}Operation cancelled by user.{RESET}")
+                        sys.exit(0)
+                        
+                    if choice.lower() == 'm':
+                        manage_connections_menu()
+                        continue
+                        
+                    if choice.isdigit():
+                        val = int(choice)
+                        if 1 <= val <= len(active_targets):
+                            connection_name = active_targets[val - 1]
+                            connection_info = connections[connection_name]
+                            target_config = folder_targets[connection_name]
+                            destination = target_config["destination"]
+                            ignores = target_config["ignores"]
+                            print(f"{GREEN}Using saved settings for target: {connection_name}{RESET}")
+                        elif val == new_target_idx:
+                            pass # Proceed to new connection setup flow
+                        else:
+                            print(f"{RED}Invalid choice. Please try again.{RESET}")
+                            continue
                     else:
-                        print(f"{RED}Invalid choice. Proceeding with new setup flow...{RESET}")
-                else:
-                    print(f"{RED}Invalid choice. Proceeding with new setup flow...{RESET}")
+                        print(f"{RED}Invalid choice. Please try again.{RESET}")
+                        continue
+            
+            # If no saved config, user chose a new sync target, or invalid option chosen
+            if not connection_info:
+                connection_name, connection_info = select_or_create_connection()
+                
+                # If the chosen connection already has saved settings for this folder, ask to reuse or overwrite
+                has_existing = (local_dir in projects and 
+                                isinstance(projects[local_dir], dict) and 
+                                connection_name in projects[local_dir])
+                                
+                if has_existing:
+                    existing_cfg = projects[local_dir][connection_name]
+                    print_header(f"Saved Config Exists for {connection_name}")
+                    print(f"  - Remote Destination : {existing_cfg['destination']}")
+                    print(f"  - Ignored items      : {', '.join(existing_cfg['ignores']) if existing_cfg['ignores'] else 'None'}")
+                    
+                    reuse = input(f"\nDo you want to reuse these saved settings? (Y/n): ").strip().lower()
+                    if reuse != 'n':
+                        destination = existing_cfg['destination']
+                        ignores = existing_cfg['ignores']
+                        print(f"{GREEN}Reusing settings for connection profile: {connection_name}{RESET}")
+                
+                # If no existing config or user chose to reconfigure/overwrite
+                if not destination:
+                    ignores = select_ignores_interactive()
+                    
+                    # Destination selection
+                    print_header("Remote Destination Folder")
+                    destination = input("Enter the destination directory on the VPS (e.g. /var/www/my-app): ").strip()
+                    while not destination:
+                        destination = input(f"{RED}Destination cannot be empty. Enter VPS directory: {RESET}").strip()
+                    
+                    # Save settings specifically for this workspace folder under this connection profile
+                    save_project_target(local_dir, connection_name, destination, ignores)
+                    print(f"{GREEN}Saved sync settings for this directory under target '{connection_name}'.{RESET}")
+            
+            break
         
-        # If no saved config, user chose a new sync target, or invalid option chosen
-        if not connection_info:
-            connection_name, connection_info = select_or_create_connection()
+        # Prompt for copy mode
+        print_header("Copy Mode")
+        print(f"  [1] {BOLD}Smart Sync{RESET}       – Only copy new or modified files {GREEN}(recommended){RESET}")
+        print(f"  [2] {BOLD}Force Copy All{RESET}   – Copy every file, regardless of changes {YELLOW}(slower){RESET}")
+        
+        mode_choice = ""
+        while mode_choice not in ['1', '2']:
+            mode_choice = input("\nSelect copy mode (1 or 2) [default: 1]: ").strip()
+            if not mode_choice:
+                mode_choice = "1"
+                break
+                
+        force_copy = mode_choice == '2'
+        if force_copy:
+            print(f"{YELLOW}Force Copy All mode selected — all files will be synced.{RESET}")
+        else:
+            print(f"{GREEN}Smart Sync mode selected — only new/modified files will be synced.{RESET}")
             
-            # If the chosen connection already has saved settings for this folder, ask to reuse or overwrite
-            has_existing = (local_dir in projects and 
-                            isinstance(projects[local_dir], dict) and 
-                            connection_name in projects[local_dir])
-                            
-            if has_existing:
-                existing_cfg = projects[local_dir][connection_name]
-                print_header(f"Saved Config Exists for {connection_name}")
-                print(f"  - Remote Destination : {existing_cfg['destination']}")
-                print(f"  - Ignored items      : {', '.join(existing_cfg['ignores']) if existing_cfg['ignores'] else 'None'}")
-                
-                reuse = input(f"\nDo you want to reuse these saved settings? (Y/n): ").strip().lower()
-                if reuse != 'n':
-                    destination = existing_cfg['destination']
-                    ignores = existing_cfg['ignores']
-                    print(f"{GREEN}Reusing settings for connection profile: {connection_name}{RESET}")
-            
-            # If no existing config or user chose to reconfigure/overwrite
-            if not destination:
-                ignores = select_ignores_interactive()
-                
-                # Destination selection
-                print_header("Remote Destination Folder")
-                destination = input("Enter the destination directory on the VPS (e.g. /var/www/my-app): ").strip()
-                while not destination:
-                    destination = input(f"{RED}Destination cannot be empty. Enter VPS directory: {RESET}").strip()
-                
-                # Save settings specifically for this workspace folder under this connection profile
-                save_project_target(local_dir, connection_name, destination, ignores)
-                print(f"{GREEN}Saved sync settings for this directory under target '{connection_name}'.{RESET}")
-
         # Run copy operation
-        run_sync(connection_info, ignores, destination)
+        run_sync(connection_info, ignores, destination, force_copy=force_copy)
         
     except KeyboardInterrupt:
         print(f"\n\n{YELLOW}Operation interrupted by user. Exiting gracefully...{RESET}")
