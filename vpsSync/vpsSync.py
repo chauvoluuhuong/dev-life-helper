@@ -323,44 +323,110 @@ def create_new_connection():
     print(f"{GREEN}Connection profile '{name}' successfully created and saved secure.{RESET}")
     return name, connection_info
 
+RECOMMENDED_PATTERNS = {
+    '.git', 'node_modules', '.DS_Store', 'dist', 'build', 
+    '.env', '.antigravitycli', '__pycache__', '.venv', 'venv', 
+    '.idea', '.vscode', '.pytest_cache', '.next', '.nuxt', 'coverage'
+}
+
+def is_recommended_ignore(name):
+    basename = os.path.basename(name)
+    if basename in RECOMMENDED_PATTERNS:
+        return True
+    if basename.startswith('.env'):
+        return True
+    if basename.endswith('.pyc') or basename.endswith('.pyo'):
+        return True
+    return False
+
 def select_ignores_interactive():
     local_dir = os.getcwd()
     print_header("Configure Ignored Folders/Files")
-    print(f"Scanning directory: {BOLD}{local_dir}{RESET}")
+    print(f"Scanning directory recursively: {BOLD}{local_dir}{RESET}")
     
-    items = sorted(os.listdir(local_dir))
-    if not items:
+    try:
+        top_items = sorted(os.listdir(local_dir))
+    except Exception as e:
+        print(f"{RED}Error reading directory: {e}{RESET}")
+        return []
+
+    if not top_items:
         print("The current directory is empty. Nothing to ignore.")
         return []
-        
-    # Sort with directories first
-    dirs = [item for item in items if os.path.isdir(os.path.join(local_dir, item))]
-    files = [item for item in items if os.path.isfile(os.path.join(local_dir, item))]
-    all_items = dirs + files
 
-    recommended = ['.git', 'node_modules', '.DS_Store', 'dist', 'build', '.env', '.antigravitycli']
+    top_dirs = [item for item in top_items if os.path.isdir(os.path.join(local_dir, item))]
+    top_files = [item for item in top_items if os.path.isfile(os.path.join(local_dir, item))]
+    
+    display_items = []
+    added_paths = set()
+
+    # Top-level directories first, then top-level files
+    for item in top_dirs + top_files:
+        display_items.append(item)
+        added_paths.add(item)
+
+    # Recursively scan subfolders to find files/directories with names recommended to ignore
+    subfolder_recommended = []
+    
+    for root, dirs, files in os.walk(local_dir, followlinks=False):
+        rel_root = os.path.relpath(root, local_dir)
+        
+        if rel_root == ".":
+            # For root level, prune dirs that match recommended ignore so we don't recurse into them
+            dirs[:] = [d for d in dirs if not is_recommended_ignore(d)]
+            continue
+
+        prune_dirs = []
+        for d in list(dirs):
+            rel_path = os.path.normpath(os.path.join(rel_root, d))
+            if is_recommended_ignore(d) or is_recommended_ignore(rel_path):
+                prune_dirs.append(d)
+                if rel_path not in added_paths:
+                    subfolder_recommended.append(rel_path)
+                    added_paths.add(rel_path)
+        
+        # Prune matched directories so os.walk does not dive into them
+        dirs[:] = [d for d in dirs if d not in prune_dirs]
+
+        for f in files:
+            rel_path = os.path.normpath(os.path.join(rel_root, f))
+            if is_recommended_ignore(f) or is_recommended_ignore(rel_path):
+                if rel_path not in added_paths:
+                    subfolder_recommended.append(rel_path)
+                    added_paths.add(rel_path)
+
+    subfolder_recommended.sort()
+    all_items = display_items + subfolder_recommended
+
     defaults_to_ignore = []
 
     print("\nSelect the files/folders you want to IGNORE. They will NOT be copied to the VPS.")
-    print(f"Recommended exclusions are marked with {BOLD}{YELLOW}*{RESET} and pre-selected as defaults.\n")
+    print(f"Recommended exclusions (found in top level and subfolders) are marked with {BOLD}{YELLOW}*{RESET} and pre-selected as defaults.\n")
 
     for idx, item in enumerate(all_items, 1):
-        is_dir = os.path.isdir(os.path.join(local_dir, item))
+        item_full_path = os.path.join(local_dir, item)
+        is_dir = os.path.isdir(item_full_path)
         suffix = "/" if is_dir else ""
         rec_str = ""
-        if item in recommended:
+        if is_recommended_ignore(item):
             rec_str = f" {BOLD}{YELLOW}* [RECOMMENDED TO IGNORE]{RESET}"
             defaults_to_ignore.append(item)
         print(f"  [{idx}] {item}{suffix}{rec_str}")
 
-    print(f"\n- To ignore the recommended defaults ({', '.join(defaults_to_ignore)}), simply press {BOLD}Enter{RESET}.")
-    print(f"- To ignore custom items, enter their numbers separated by commas (e.g. {BOLD}1,3,5{RESET}).")
+    if defaults_to_ignore:
+        print(f"\n- To ignore the recommended defaults ({', '.join(defaults_to_ignore)}), simply press {BOLD}Enter{RESET}.")
+    else:
+        print(f"\n- To accept defaults (no recommended items detected), press {BOLD}Enter{RESET}.")
+    print(f"- To ignore custom items, enter their numbers separated by commas (e.g. {BOLD}1,3,5{RESET}) or type custom paths (e.g. {BOLD}logs/, *.tmp{RESET}).")
     print(f"- To ignore NOTHING (copy absolutely everything), type {BOLD}none{RESET}.")
     
     user_input = input("\nEnter choice: ").strip()
     
     if not user_input:
-        print(f"{GREEN}Using recommended defaults: {', '.join(defaults_to_ignore)}{RESET}")
+        if defaults_to_ignore:
+            print(f"{GREEN}Using recommended defaults: {', '.join(defaults_to_ignore)}{RESET}")
+        else:
+            print(f"{GREEN}No recommended defaults; proceeding with no exclusions.{RESET}")
         return defaults_to_ignore
         
     if user_input.lower() == 'none':
@@ -378,7 +444,8 @@ def select_ignores_interactive():
                 print(f"{YELLOW}Warning: Number {val} is out of range, skipped.{RESET}")
         else:
             if part:
-                print(f"{YELLOW}Warning: '{part}' is not a valid number, skipped.{RESET}")
+                ignores.append(part)
+                print(f"{GREEN}Added custom exclusion: {part}{RESET}")
 
     print(f"{GREEN}Selected exclusions: {', '.join(ignores) if ignores else 'None'}{RESET}")
     return ignores
