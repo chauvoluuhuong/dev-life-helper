@@ -28,13 +28,14 @@ sudo ./setup.sh
 - 🔍 **Finds all `.sh` files** recursively in the project
 - ⚡ **Makes them executable** with `chmod +x`
 - 🌐 **Creates global symlinks** so you can run scripts from anywhere
+- 🤖 **Builds and registers `apple-automation-mcp`** across **Gemini** (`~/.gemini/config/mcp_config.json`), **Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json`), **Claude Code** (`~/.claude.json`), and **ChatGPT / Codex** (`~/.codex/config.toml`)
 - 🛡️ **Safe operation** with dry-run mode to preview changes
 
 ### Available options
 
 - `--dry-run`: Preview changes without making them
 - `--local`: Use `~/.local/bin` (no sudo needed)
-- `--remove`: Remove all created symlinks
+- `--remove`: Remove all created symlinks and unregister MCP servers
 - `--help`: Show usage information
 
 ### After setup, you can run scripts globally:
@@ -49,6 +50,28 @@ dataMigration
 # Instead of ./dockerUtils/docker-manager.sh
 docker-manager
 ```
+
+---
+
+## appleAutomationMcp (`apple-automation-mcp`)
+
+An MCP (Model Context Protocol) server providing tools to execute, syntax-check, save, and reuse **AppleScript** and **JXA (JavaScript for Automation)** scripts on macOS via `osascript` and `osacompile`.
+
+See [appleAutomationMcp/README.md](./appleAutomationMcp/README.md) for full documentation.
+
+### Tools Provided
+
+| Tool | Description |
+| :--- | :--- |
+| `run_applescript` | Execute inline AppleScript code via `osascript -l AppleScript`. |
+| `run_jxa` | Execute inline JavaScript for Automation (JXA) code via `osascript -l JavaScript`. |
+| `run_osascript_file` | Execute an `.applescript`, `.scpt`, `.scptd`, or `.js` file from disk. |
+| `validate_osascript` | Compile-check AppleScript or JXA syntax via `osacompile` without executing it. |
+| `save_script` | Save a script as `<name>_<description>.<ext>` in `appleAutomationMcp/scripts/` for reuse. |
+| `list_saved_scripts` | List all saved `<name>_<description>` scripts available for reuse. |
+| `run_saved_script` | Run a saved script by its `name` or `<name>_<description>` filename. |
+| `get_saved_script` | Read the metadata and source code of a saved script. |
+| `delete_saved_script` | Delete a saved script from the library. |
 
 ---
 
