@@ -193,10 +193,216 @@ setup_scripts() {
     fi
 }
 
+# Function to configure MCP servers for Claude, Gemini, and ChatGPT
+setup_mcp_servers() {
+    local mcp_dir="$SCRIPT_DIR/appleAutomationMcp"
+    local mcp_name="apple-automation-mcp"
+
+    if [[ ! -d "$mcp_dir" ]]; then
+        return 0
+    fi
+
+    print_status "$BLUE" ""
+    print_status "$BLUE" "🤖 Setting up MCP Server: $mcp_name"
+    print_status "$BLUE" "========================================"
+
+    if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
+        print_status "$RED" "Error: node and npm are required to build and install $mcp_name"
+        return 1
+    fi
+
+    local node_bin
+    node_bin="$(command -v node)"
+    local server_entry="$mcp_dir/dist/index.js"
+
+    # Build MCP server
+    execute_cmd "cd '$mcp_dir' && npm install --no-fund --no-audit && npm run build && chmod +x '$server_entry'" \
+        "Building $mcp_name in $mcp_dir"
+
+    # Register in Gemini, Claude Desktop, Claude Code, and ChatGPT (Codex)
+    local gemini_config="$HOME/.gemini/config/mcp_config.json"
+    local claude_desktop_config="$HOME/Library/Application Support/Claude/claude_desktop_config.json"
+    local claude_code_config="$HOME/.claude.json"
+    local chatgpt_codex_config="$HOME/.codex/config.toml"
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        print_status "$YELLOW" "[DRY RUN] Would register $mcp_name in:"
+        print_status "$BLUE" "  → Gemini:         $gemini_config"
+        print_status "$BLUE" "  → Claude Desktop: $claude_desktop_config"
+        print_status "$BLUE" "  → Claude Code:    $claude_code_config"
+        print_status "$BLUE" "  → ChatGPT/Codex:  $chatgpt_codex_config"
+        return 0
+    fi
+
+    local claude_was_running=false
+    if pgrep -x "Claude" >/dev/null 2>&1; then
+        claude_was_running=true
+        print_status "$YELLOW" "Closing Claude Desktop temporarily so it doesn't overwrite claude_desktop_config.json..."
+        osascript -e 'tell application "Claude" to quit' >/dev/null 2>&1 || killall "Claude" >/dev/null 2>&1 || true
+        for _ in {1..20}; do
+            if ! pgrep -x "Claude" >/dev/null 2>&1; then
+                break
+            fi
+            sleep 0.25
+        done
+    fi
+
+    MCP_NAME="$mcp_name" NODE_BIN="$node_bin" SERVER_ENTRY="$server_entry" \
+    GEMINI_CONFIG="$gemini_config" \
+    CLAUDE_DESKTOP_CONFIG="$claude_desktop_config" \
+    CLAUDE_CODE_CONFIG="$claude_code_config" \
+    CHATGPT_CODEX_CONFIG="$chatgpt_codex_config" \
+    node -e '
+const fs = require("fs");
+const path = require("path");
+
+const mcpName = process.env.MCP_NAME;
+const nodeBin = process.env.NODE_BIN;
+const serverEntry = process.env.SERVER_ENTRY;
+
+function upsertJsonMcp(filePath, label, createIfMissing = true) {
+  try {
+    const dir = path.dirname(filePath);
+    if (!fs.existsSync(dir)) {
+      if (!createIfMissing) return;
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    let data = {};
+    if (fs.existsSync(filePath)) {
+      const raw = fs.readFileSync(filePath, "utf8").trim();
+      if (raw) data = JSON.parse(raw);
+    } else if (!createIfMissing) {
+      return;
+    }
+    if (!data.mcpServers || typeof data.mcpServers !== "object") {
+      data.mcpServers = {};
+    }
+    data.mcpServers[mcpName] = {
+      command: nodeBin,
+      args: [serverEntry],
+    };
+    fs.writeFileSync(filePath, JSON.stringify(data, null, 2) + "\n", "utf8");
+    console.log(`  ✔ Registered in ${label}: ${filePath}`);
+  } catch (err) {
+    console.error(`  ✖ Failed to update ${label} (${filePath}): ${err.message}`);
+  }
+}
+
+function upsertTomlMcp(filePath, label) {
+  try {
+    const dir = path.dirname(filePath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    let content = fs.existsSync(filePath) ? fs.readFileSync(filePath, "utf8") : "";
+    const blockRegex = new RegExp(
+      `\\n?\\[mcp_servers\\.${mcpName}(?:\\.[^\\]]+)?\\][\\s\\S]*?(?=\\n\\[|$)`,
+      "g"
+    );
+    content = content.replace(blockRegex, "").trimEnd();
+    const newBlock = [
+      "",
+      `[mcp_servers.${mcpName}]`,
+      `command = ${JSON.stringify(nodeBin)}`,
+      `args = [${JSON.stringify(serverEntry)}]`,
+      "",
+    ].join("\n");
+    fs.writeFileSync(filePath, (content ? content + "\n" : "") + newBlock, "utf8");
+    console.log(`  ✔ Registered in ${label}: ${filePath}`);
+  } catch (err) {
+    console.error(`  ✖ Failed to update ${label} (${filePath}): ${err.message}`);
+  }
+}
+
+upsertJsonMcp(process.env.GEMINI_CONFIG, "Gemini (Antigravity)", true);
+upsertJsonMcp(process.env.CLAUDE_DESKTOP_CONFIG, "Claude Desktop", true);
+upsertJsonMcp(process.env.CLAUDE_CODE_CONFIG, "Claude Code", false);
+upsertTomlMcp(process.env.CHATGPT_CODEX_CONFIG, "ChatGPT / Codex");
+'
+
+    if [[ "$claude_was_running" == "true" ]]; then
+        print_status "$BLUE" "Relaunching Claude Desktop..."
+        open -a "Claude" >/dev/null 2>&1 || true
+    fi
+
+    print_status "$GREEN" "MCP server '$mcp_name' configured for Gemini, Claude, and ChatGPT!"
+}
+
+# Function to remove MCP server registrations from Claude, Gemini, and ChatGPT
+remove_mcp_servers() {
+    local mcp_name="apple-automation-mcp"
+    local gemini_config="$HOME/.gemini/config/mcp_config.json"
+    local claude_desktop_config="$HOME/Library/Application Support/Claude/claude_desktop_config.json"
+    local claude_code_config="$HOME/.claude.json"
+    local chatgpt_codex_config="$HOME/.codex/config.toml"
+
+    print_status "$YELLOW" "Removing MCP server '$mcp_name' from Gemini, Claude, and ChatGPT..."
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        print_status "$YELLOW" "[DRY RUN] Would remove $mcp_name from:"
+        print_status "$BLUE" "  → Gemini:         $gemini_config"
+        print_status "$BLUE" "  → Claude Desktop: $claude_desktop_config"
+        print_status "$BLUE" "  → Claude Code:    $claude_code_config"
+        print_status "$BLUE" "  → ChatGPT/Codex:  $chatgpt_codex_config"
+        return 0
+    fi
+
+    if ! command -v node >/dev/null 2>&1; then
+        return 0
+    fi
+
+    MCP_NAME="$mcp_name" \
+    GEMINI_CONFIG="$gemini_config" \
+    CLAUDE_DESKTOP_CONFIG="$claude_desktop_config" \
+    CLAUDE_CODE_CONFIG="$claude_code_config" \
+    CHATGPT_CODEX_CONFIG="$chatgpt_codex_config" \
+    node -e '
+const fs = require("fs");
+const mcpName = process.env.MCP_NAME;
+
+function removeJsonMcp(filePath, label) {
+  if (!fs.existsSync(filePath)) return;
+  try {
+    const data = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    if (data.mcpServers && mcpName in data.mcpServers) {
+      delete data.mcpServers[mcpName];
+      fs.writeFileSync(filePath, JSON.stringify(data, null, 2) + "\n", "utf8");
+      console.log(`  ✔ Removed from ${label}: ${filePath}`);
+    }
+  } catch (err) {
+    console.error(`  ✖ Failed to update ${label} (${filePath}): ${err.message}`);
+  }
+}
+
+function removeTomlMcp(filePath, label) {
+  if (!fs.existsSync(filePath)) return;
+  try {
+    const content = fs.readFileSync(filePath, "utf8");
+    const blockRegex = new RegExp(
+      `\\n?\\[mcp_servers\\.${mcpName}(?:\\.[^\\]]+)?\\][\\s\\S]*?(?=\\n\\[|$)`,
+      "g"
+    );
+    const updated = content.replace(blockRegex, "").trimEnd() + "\n";
+    if (updated !== content) {
+      fs.writeFileSync(filePath, updated, "utf8");
+      console.log(`  ✔ Removed from ${label}: ${filePath}`);
+    }
+  } catch (err) {
+    console.error(`  ✖ Failed to update ${label} (${filePath}): ${err.message}`);
+  }
+}
+
+removeJsonMcp(process.env.GEMINI_CONFIG, "Gemini (Antigravity)");
+removeJsonMcp(process.env.CLAUDE_DESKTOP_CONFIG, "Claude Desktop");
+removeJsonMcp(process.env.CLAUDE_CODE_CONFIG, "Claude Code");
+removeTomlMcp(process.env.CHATGPT_CODEX_CONFIG, "ChatGPT / Codex");
+'
+}
+
 # Main execution
 main() {
-    print_status "$BLUE" "🚀 Shell Script Index Manager"
-    print_status "$BLUE" "=============================="
+    print_status "$BLUE" "🚀 Shell Script & MCP Index Manager"
+    print_status "$BLUE" "===================================="
     
     if [[ "$DRY_RUN" == "true" ]]; then
         print_status "$YELLOW" "DRY RUN MODE - No changes will be made"
@@ -206,8 +412,10 @@ main() {
     
     if [[ "$REMOVE_MODE" == "true" ]]; then
         remove_symlinks
+        remove_mcp_servers
     else
         setup_scripts
+        setup_mcp_servers
     fi
 }
 

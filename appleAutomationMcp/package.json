@@ -1,0 +1,24 @@
+{
+  "name": "apple-automation-mcp",
+  "version": "1.0.0",
+  "description": "MCP server providing tools to execute AppleScript and JXA (JavaScript for Automation) scripts on macOS via osascript",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "apple-automation-mcp": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc --watch",
+    "test": "node --test dist/test.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0"
+  }
+}
