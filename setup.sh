@@ -234,6 +234,19 @@ setup_mcp_servers() {
         return 0
     fi
 
+    local claude_was_running=false
+    if pgrep -x "Claude" >/dev/null 2>&1; then
+        claude_was_running=true
+        print_status "$YELLOW" "Closing Claude Desktop temporarily so it doesn't overwrite claude_desktop_config.json..."
+        osascript -e 'tell application "Claude" to quit' >/dev/null 2>&1 || killall "Claude" >/dev/null 2>&1 || true
+        for _ in {1..20}; do
+            if ! pgrep -x "Claude" >/dev/null 2>&1; then
+                break
+            fi
+            sleep 0.25
+        done
+    fi
+
     MCP_NAME="$mcp_name" NODE_BIN="$node_bin" SERVER_ENTRY="$server_entry" \
     GEMINI_CONFIG="$gemini_config" \
     CLAUDE_DESKTOP_CONFIG="$claude_desktop_config" \
@@ -306,6 +319,12 @@ upsertJsonMcp(process.env.CLAUDE_DESKTOP_CONFIG, "Claude Desktop", true);
 upsertJsonMcp(process.env.CLAUDE_CODE_CONFIG, "Claude Code", false);
 upsertTomlMcp(process.env.CHATGPT_CODEX_CONFIG, "ChatGPT / Codex");
 '
+
+    if [[ "$claude_was_running" == "true" ]]; then
+        print_status "$BLUE" "Relaunching Claude Desktop..."
+        open -a "Claude" >/dev/null 2>&1 || true
+    fi
+
     print_status "$GREEN" "MCP server '$mcp_name' configured for Gemini, Claude, and ChatGPT!"
 }
 
